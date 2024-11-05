@@ -7,38 +7,56 @@
 HTTPRequest HTTP(WSABUF buffer, int len) {
 	HTTPRequest req;
 	if (buffer.buf[0] == 'G') {
-		req.method = GET;
-		req.GET = std::make_shared<std::map<std::string, std::string > >();
-		req.page = "";
-
 		std::stringstream request(buffer.buf);
-
 		std::string get("");
+		int pos;
 
-		//std::getline(request, get);
+		req.method = GET;
+		req.GET = std::map<std::string, std::string >();
+		req.page = "";
+		request >> get >> get;
+		
+		// replace & and = to space to >> operator works
+		while ((pos = get.rfind('&')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+		while ((pos = get.rfind('=')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
 
-		request >> get;
+		// retrive the actual page
+		request = std::stringstream(get);
+		request >> req.page;
 
-		/*int find = request.find("?");
-		if (find != std::string::npos) {
-			req.page = request.substr(0, find);
+		// retrive the actual get map
+		while (!request.eof()) {
+			std::string one;
+			std::string two;
 
-			request = request.substr(req.page.length(), request.length() - 4);
+			request >> one;
+			request >> two;
 
-			size_t aFindEqual = 0;
-			while ((aFindEqual = request.find('=')) != std::string::npos) {
+			req.GET.insert({ one, two });
+		}
 
-			}
+		// retrive the session id cookie
+		request = std::stringstream(buffer.buf);
+		while (std::getline(request, get)) {
+			if (get._Starts_with("Cookies")) {
+				pos = get.rfind('=');
+				get.erase(pos, 1);
+				get.insert(pos, " ");
 
-			auto aFindAmpersand = request.find('&');
-			while ((aFindEqual = request.find('=')) != std::string::npos ||
-				(aFindAmpersand = request.find('&')) != std::string::npos) {
-				if ()
+				std::stringstream subRequest(get);
+
+				subRequest >> get >> get;
+				if (get.compare("Session-ID")) {
+					subRequest >> req.SESSION_ID;
+				}
 			}
 		}
-		else {
-			req.page = request.substr(0, request.length() - 4);
-		}*/
 	}
 	return req;
 }

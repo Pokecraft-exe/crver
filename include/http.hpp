@@ -38,12 +38,12 @@ enum HTTPMethod {
 };
 
 struct HTTPRequest {
-	HTTPMethod method;
-	std::string page;
-	std::string host;
-	std::shared_ptr < std::map<std::string, std::string> > GET;
-	std::vector<std::string> POST;
-	int SESSION_ID;
+	HTTPMethod method = HTTPMethod::none;
+	std::string page = "";
+	std::string host = "";
+	std::map<std::string, std::string> GET = {};
+	std::vector<std::string> POST = {};
+	int SESSION_ID = -1;
 };
 
 HTTPRequest HTTP(WSABUF buffer, int len);
