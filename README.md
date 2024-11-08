@@ -20,3 +20,34 @@ is (for now) valid and can leak all your private data!
 ## link between server and the pages
 
 Windows provides MMF (Memory Mapped Files) that is a file stored in RAM sharable between processes. This is what i (will) use to share infos between the page and the server.
+
+## CRVER API
+
+c++ example using crver.hpp file
+```c++
+int main(int argc, crver::ENV argv) {
+	MakeEnvironnemnt(env);
+	using std::cout, crver::endl;
+
+	cout << 
+"<html>"
+"  <head>"
+//"		<link rel=\"stylesheet\" type=\"text/css\" href=\"styles.css\" />"
+"		<title>C++ page!</title>"
+"	</head>"
+"	<body>"
+"		Hello from C++ dynamic page! method: " << (env.request.method == crver::GET ? "GET" : "POST") << 
+		" Bye Socket " << env.session.connexion << "!" << endl << 
+		env.request.GET.size() << endl;
+
+		for (auto i : env.request.GET) {
+			cout << i.first << " = " << i.second << endl;
+		}
+
+cout <<
+	"</body>\
+</html>";
+
+	return crver::HTTPResponse();
+}
+```
