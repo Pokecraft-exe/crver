@@ -19,7 +19,7 @@ is (for now) valid and can leak all your private data!
 
 ## link between server and the pages
 
-Windows provides MMF (Memory Mapped Files) that is a file stored in RAM sharable between processes. This is what i (will) use to share infos between the page and the server.
+The new crver API uses ramdisk and RAM filesystems to share info between the page and the server.
 
 ## CRVER API
 
