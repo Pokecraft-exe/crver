@@ -3,22 +3,25 @@
 #include "http.hpp"
 #include "compress.hpp"
 #include "win32_interProcessMemory.hpp"
+#include <fstream>
 #include <codecvt>
 
-#define StrToW(x) MultiByteToWideChar(x)
-
-std::string WtoStr(wchar_t* ws) {
-	char buf[255] = { 0 };
-	WideCharToMultiByte(CP_ACP, WC_COMPOSITECHECK, ws, wcslen(ws), buf, 255, "@ù", nullptr);
-	return std::string(buf);
-}
-
+/*
+ * Constructor and operator for Session to act as the socket for simplicity
+ */
 Session::Session(SOCKET sock) { connexion = sock; dest_len = sizeof(sockaddr); }
-Session::Session(const Session& sess) { memcpy(this, &sess, sizeof(Session)); }
+Session::Session(const Session& sess) { connexion = sess.connexion; dest_len = sess.dest_len; id = sess.id; destination = sess.destination; cache = sess.cache; }
 Session::operator SOCKET() { return connexion; }
+Session::~Session() { cache.~basic_string(); }
 
+/*
+ * Constructor for Server
+ */
 Server::Server(void) {};
 
+/*
+ * Returns all the content of a file 
+ */
 std::string readFile(const std::string& filename) {
 	std::ifstream file(filename);
 	std::string contents;
@@ -46,12 +49,32 @@ std::string readFile(const std::string& filename) {
 	return contents;
 }
 
+/*
+ * Execute a program with the session and the request
+ */
 std::string exec(std::string cmd, Session* session, HTTPRequest* request) {
 	FILE* fp;
 	std::array<char, 0x1000> buffer;
 	std::string result;
 
-	cmd += " " + WtoStr(session->server_to_page) + " " + WtoStr(session->page_to_server);
+	std::ofstream osCacheFile(session->cache, std::ios::out | std::ios::binary);
+	std::string sSize = std::to_string(sizeof(Session)) + "\n";
+
+	osCacheFile << session->connexion;
+	osCacheFile << " ";
+	osCacheFile << (int)request->method << " ";
+	if (request->method == GET) {
+		for (auto i : request->GET) {
+			osCacheFile << i.first << " " << i.second << " ";
+		}
+	}
+	else {
+		std::cout << "writting POST method to cache file is not supported yet!\n";
+	}
+
+	osCacheFile.close();
+
+	cmd += " " + session->cache;
 
 	// Open the command for reading
 	fp = _popen(cmd.c_str(), "r");
@@ -60,9 +83,10 @@ std::string exec(std::string cmd, Session* session, HTTPRequest* request) {
 	}
 
 	// Read the output a line at a time - output it
-	while (fgets(buffer.data(), 0x5000 - 1, fp) != NULL) {
+	while (fgets(buffer.data(), 0x1000 - 1, fp) != NULL) {
 		result += buffer.data();
 	}
+
 	return result;
 }
 
@@ -103,21 +127,16 @@ void Server::connexionListener(Server* s) {
 
 			int socketNumber = socketBounded(s->ClientSessions, newClient.destination);
 			if (socketNumber != 0) {
-				s->ClientSessions[socketNumber].listener = std::thread(&listener, s, socketNumber);
-				s->ClientSessions[socketNumber].listener.detach();
+				listener(s, NUM_CLIENTS() - 1);
 			}
 			else {
 				std::wcout << "New client no " << NUM_CLIENTS() << " destination: " << s->ws_addr << '\n';
 
-				newClient.server_to_page = (wchar_t*)(L"GLOBAL/" + std::to_wstring(newClient.connexion) + L"PTS").c_str();
-				newClient.page_to_server = (wchar_t*)(L"GLOBAL/" + std::to_wstring(newClient.connexion) + L"PTS").c_str();
-
+				newClient.cache = s->temp + "crver_session_" + std::to_string(NUM_CLIENTS()) + ".tmp";
 				s->ClientSessions.push_back(newClient);
 
-				interProcessMemory::send(newClient.server_to_page, (char*)"test", 4);
-				interProcessMemory::send(newClient.page_to_server, (char*)"test", 4);
-				s->ClientSessions[NUM_CLIENTS() - 1].listener = std::thread(&listener, s, NUM_CLIENTS() - 1);
-				s->ClientSessions[NUM_CLIENTS() - 1].listener.join();
+				std::thread t = std::thread(listener, s, NUM_CLIENTS() - 1);
+				t.detach();
 			}
 		}
 	}
@@ -125,60 +144,59 @@ void Server::connexionListener(Server* s) {
 }
 
 int Server::listener(Server* s, int i_currentSession) {
-	int status = 0;
+	int status = 1;
 	Session CurrentSession = s->ClientSessions[i_currentSession];
 	WSABUF buffer;
 	DWORD bytesSent = 0;
+	std::string sResponse_buf = "";
 
 	std::cout << "Listener[" << i_currentSession << "] engaged\n";
-
-	do {
-		buffer.buf = new char[0x5000]; // 5KB buffer for recv
-		buffer.len = 0x5000;
+	while (status > 0) {
+		buffer = { 0x1000, new char[0x1000] };
 
 		status = recv(CurrentSession, buffer.buf, buffer.len, 0);
-		if (status > 0) 
-		{
-			HTTPRequest request = HTTP(buffer, status);
-
-			if (request.SESSION_ID) return;
-
-			std::stringstream response_buf;
-			std::time_t t_date = time(nullptr);
-			std::tm* date = gmtime(&t_date);
-			std::string page = "";
-
-			//std::cout << "Listener[" << i_currentSession << "] requested page : " << request.page << " method : " << (request.method == GET ? "GET" : "POST") << " Client: " << CurrentSession.id;
-
-			std::filesystem::path file = s->dir + "." + request.page;
-
-			if (!std::filesystem::exists(file)) 
-			{
-				if (file.extension().string().compare("") || file.extension().string().compare(""))
-					page = exec(file.string(), &CurrentSession, &request);
-				else 
-					page = readFile(file.string());
-
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id);
-			}
-			else 
-			{
-				std::cout << "404";
-				response_buf << HTTP404(date);
-			}
-
-			std::string s_response_buf = response_buf.str();
-
-			delete[] buffer.buf;
-			buffer.buf = (CHAR*)s_response_buf.c_str();
-			buffer.len = response_buf.str().length();
-
-			WSASend(CurrentSession, &buffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
-		}
-		else if (status < 0)
+		if (status < 0) {
 			wprintf(L"\trecv failed with error: %d\n", WSAGetLastError());
-	} while (status > 0);
+			s->terminate();
+			exit(0);
+		}
+		HTTPRequest request = HTTP(buffer, status);
+		std::stringstream response_buf;
+		std::time_t t_date = time(nullptr);
+		std::tm* date = gmtime(&t_date);
+		std::filesystem::path file = s->dir + "." + request.page;
 
+		std::cout << "Listener[" << i_currentSession << "] requested page : " << request.page << " method : " << (request.method == GET ? "GET" : "POST") << " Client: " << CurrentSession.id;
+
+		if (!request.page.compare(""))
+			return 0;
+		// 404 ?
+		if (std::filesystem::exists(file)) 
+		{	// is compiled?
+			if (!file.extension().string().compare(".exe")) {
+				response_buf << exec(file.string(), &CurrentSession, &request);
+			}
+			else if (!file.extension().string().compare(".css")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/css");
+			} else {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/html");
+			}
+		}
+		else 
+		{
+			std::cout << "404";
+			response_buf << HTTP404(date);
+		}
+
+		sResponse_buf = response_buf.str();
+
+		delete[] buffer.buf;
+		buffer = { (unsigned long)sResponse_buf.size(), (CHAR*)sResponse_buf.c_str() };
+
+		WSASend(CurrentSession, &buffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
+	};
 
 	std::cout << "Listener[" << i_currentSession << "] closed\n";
 

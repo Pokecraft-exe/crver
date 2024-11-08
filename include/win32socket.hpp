@@ -22,14 +22,13 @@ class Session {
 public:
 	SOCKET connexion = INVALID_SOCKET;
 	int dest_len = 0;
-	std::thread listener = {};
 	size_t id = 0;
 	_Field_size_bytes_(dest_len) struct sockaddr destination = { 0 };
-	wchar_t* server_to_page;
-	wchar_t* page_to_server;
+	std::string cache = "";
 	Session(SOCKET);
 	Session(const Session&);
 	operator SOCKET();
+	~Session();
 };
 
 class Server {
@@ -44,6 +43,7 @@ private:
 public:
 	char* port = 0;
 	std::string dir = "";
+	std::string temp = "";
 	std::vector<Session> ClientSessions = {};
 
 	Server();

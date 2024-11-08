@@ -4,12 +4,12 @@
 #include <map>
 #include "win32socket.hpp"
 
-#define HTTPResponse(DATE, CONTENT, LEN, SESSIONID) \
+#define HTTPResponse(DATE, CONTENT, LEN, SESSIONID, CONTENT_TYPE) \
 						"HTTP/1.1 200 OK\n"														\
 						<< "Date : " << std::put_time(DATE, (char*)"%a, %d %b %Y %T %Z")		\
 						<< "\nServer: c_rver / 1.0.0 (Windows)\n"								\
-						<< "Content-Type: text/html\n"											\
-						<< "Content-Length:" << std::to_string(LEN)								\
+						<< "Content-Type: " << CONTENT_TYPE << "\n"								\
+						<< "Content-Length:" << std::to_string(LEN)	<< "\n"						\
 						<< "Connection: keep-alive\n"											\
 						<< "Referrer-Policy: strict-origin-when-cross-origin\n"					\
 						<< "X-Content-Type-Options: nosniff\n"									\
@@ -42,7 +42,7 @@ struct HTTPRequest {
 	std::string page = "";
 	std::string host = "";
 	std::map<std::string, std::string> GET = {};
-	std::vector<std::string> POST = {};
+	std::map<std::string, std::string> POST = {};
 	int SESSION_ID = -1;
 };
 
