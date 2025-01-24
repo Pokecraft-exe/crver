@@ -25,29 +25,27 @@ The new crver API uses ramdisk and RAM filesystems to share info between the pag
 
 c++ example using crver.hpp file
 ```c++
+#include "includes/crver.hpp"
 int main(int argc, crver::ENV argv) {
-	MakeEnvironnemnt(env);
-	using std::cout, crver::endl;
+    MakeEnvironnemnt(env);
+    using std::cout, crver::endl;
 
-	cout << 
-"<html>"
-"  <head>"
-//"		<link rel=\"stylesheet\" type=\"text/css\" href=\"styles.css\" />"
-"		<title>C++ page!</title>"
-"	</head>"
-"	<body>"
-"		Hello from C++ dynamic page! method: " << (env.request.method == crver::GET ? "GET" : "POST") << 
-		" Bye Socket " << env.session.connexion << "!" << endl << 
-		env.request.GET.size() << endl;
+    cout << 
+"<html>" <<
+    "<body>" <<
+        "Hello from C++ dynamic page! method: " << (env.request.method == crver::GET ? "GET" : "POST") << 
+        " Bye Socket " << env.session.connexion << "!" << endl << 
+        env.request.GET.size() << endl;
 
-		for (auto i : env.request.GET) {
-			cout << i.first << " = " << i.second << endl;
-		}
+        for (auto i : env.request.GET) {
+            cout << i.first << " = " << i.second << endl;
+        }
 
 cout <<
-	"</body>\
-</html>";
+    "</body>"
+"</html>";
 
-	return crver::HTTPResponse();
+    return crver::HTTPResponse();
 }
 ```
+![image](https://github.com/user-attachments/assets/1d8a0dbf-7f66-4c87-bf95-2c0991cf3e72)
