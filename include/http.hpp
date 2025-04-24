@@ -7,13 +7,13 @@
 #define HTTPResponse(DATE, CONTENT, LEN, SESSIONID, CONTENT_TYPE) \
 						"HTTP/1.1 200 OK\n"														\
 						<< "Date : " << std::put_time(DATE, (char*)"%a, %d %b %Y %T %Z")		\
-						<< "\nServer: c_rver / 1.0.0 (Windows)\n"								\
+						<< "\nServer: c_rver / 2.0.0 (Windows)\n"								\
 						<< "Content-Type: " << CONTENT_TYPE << "\n"								\
 						<< "Content-Length:" << std::to_string(LEN)	<< "\n"						\
 						<< "Connection: keep-alive\n"											\
 						<< "Referrer-Policy: strict-origin-when-cross-origin\n"					\
 						<< "X-Content-Type-Options: nosniff\n"									\
-						<< "Set-Cookie: Session-ID=" << SESSIONID								\
+						<< "Set-Cookie: Session-ID=" << SESSIONID << "\n"						\
 						<< "Feature-Policy: accelerometer 'none'; camera 'none'; geolocation 'none'; gyroscope 'none'; magnetometer 'none'; microphone 'none'; payment 'none'; usb 'none'\n" \
 						<< "Content-Security-Policy: default-src 'self'; script-src cdnjs.cloudflare.com 'self'; style-src cdnjs.cloudflare.com 'self' fonts.googleapis.com 'unsafe-inline'; font-src fonts.googleapis.com fonts.gstatic.com cdnjs.cloudflare.com; frame-ancestors 'none'; report-uri https://scotthelme.report-uri.com/r/d/csp/enforce\r\n\r\n" \
 						<< CONTENT << "\r\n"
@@ -21,11 +21,11 @@
 #define HTTP404(DATE) \
 						"HTTP/1.1 404 Not Found\n"												\
 						<< "Date : " << std::put_time(DATE, (char*)"%a, %d %b %Y %T %Z")		\
-						<< "\nServer: c_rver / 1.0.0 (Windows)\n"								\
+						<< "\nServer: c_rver / 2.0.0 (Windows)\n"								\
 						<< "Connection: keep-alive\n"											\
 						<< "Referrer-Policy: strict-origin-when-cross-origin\r\n"				\
 						<< "Content-Type: text/html\n"											\
-						<< "Content-Length: 149\n"												\
+						<< "Content-Length: 148\n"												\
 						<< "X-Content-Type-Options: nosniff\r\n\r\n"							\
 						<< "<html><head><title>404 Not Found</title></head><body><center>"		\
 						<< "<h1>404 Not Found</h1></center><hr><center>c_rver/1.0.0 (Windows)"	\

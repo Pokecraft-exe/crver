@@ -90,16 +90,6 @@ std::string exec(std::string cmd, Session* session, HTTPRequest* request) {
 	return result;
 }
 
-int socketBounded(std::vector<Session>& Sessions, sockaddr a) {
-	size_t size = Sessions.size();
-	for (int i = 0; i < size; i++) {
-		if (memcmp(Sessions[i].destination.sa_data, a.sa_data, sizeof(CHAR)) == 0) {
-			return i;
-		}
-	}
-	return 0;
-}
-
 void Server::connexionListener(Server* s) {
 	std::vector<std::thread> Listeners = {};
 
@@ -125,48 +115,50 @@ void Server::connexionListener(Server* s) {
 		else {
 			InetNtop(s->hints.ai_family, &newClient.destination, s->ws_addr, 100);
 
-			int socketNumber = socketBounded(s->ClientSessions, newClient.destination);
-			if (socketNumber != 0) {
-				listener(s, NUM_CLIENTS() - 1);
-			}
-			else {
-				std::wcout << "New client no " << NUM_CLIENTS() << " destination: " << s->ws_addr << '\n';
-
-				newClient.cache = s->temp + "crver_session_" + std::to_string(NUM_CLIENTS()) + ".tmp";
-				s->ClientSessions.push_back(newClient);
-
-				std::thread t = std::thread(listener, s, NUM_CLIENTS() - 1);
-				t.detach();
-			}
+			std::thread t = std::thread(listener, s, newClient);
+			t.detach();
 		}
 	}
 	return;
 }
 
-int Server::listener(Server* s, int i_currentSession) {
+int Server::listener(Server* s, Session newClient) {
 	int status = 1;
-	Session CurrentSession = s->ClientSessions[i_currentSession];
+	Session CurrentSession = newClient;
+	WSAOVERLAPPED RecvOverlapped;
 	WSABUF buffer;
-	DWORD bytesSent = 0;
+	DWORD bytesSent = 0, flags = 0;
 	std::string sResponse_buf = "";
 
-	std::cout << "Listener[" << i_currentSession << "] engaged\n";
 	while (status > 0) {
+		//SecureZeroMemory((PVOID)&RecvOverlapped, sizeof(WSAOVERLAPPED));
 		buffer = { 0x1000, new char[0x1000] };
+		ZeroMemory(buffer.buf, 0x1000);
 
+		//status = WSARecv(CurrentSession, &buffer, 1, &bytesSent, &flags, &RecvOverlapped, nullptr);
 		status = recv(CurrentSession, buffer.buf, buffer.len, 0);
-		if (status < 0) {
+		if (status < 0)
 			wprintf(L"\trecv failed with error: %d\n", WSAGetLastError());
-			s->terminate();
-			exit(0);
-		}
+
 		HTTPRequest request = HTTP(buffer, status);
 		std::stringstream response_buf;
 		std::time_t t_date = time(nullptr);
 		std::tm* date = gmtime(&t_date);
 		std::filesystem::path file = s->dir + "." + request.page;
 
-		std::cout << "Listener[" << i_currentSession << "] requested page : " << request.page << " method : " << (request.method == GET ? "GET" : "POST") << " Client: " << CurrentSession.id;
+		if (request.SESSION_ID == -1) {
+			std::wcout << "New client no " << NUM_CLIENTS();
+			newClient.cache = s->temp + "crver_session_" + std::to_string(NUM_CLIENTS()) + ".tmp";
+			s->ClientSessions.push_back(newClient);
+			CurrentSession.cache = newClient.cache;
+		}
+
+		std::cout << "Requested page : " << request.page << " method : " << (request.method == GET ? "GET" : (request.method == POST ? "POST" : "none")) << " Client: " << CurrentSession.id;
+
+		if (request.method == none) {
+			status = 0;
+			break;
+		}
 
 		if (!request.page.compare(""))
 			return 0;
@@ -176,29 +168,67 @@ int Server::listener(Server* s, int i_currentSession) {
 			if (!file.extension().string().compare(".exe")) {
 				response_buf << exec(file.string(), &CurrentSession, &request);
 			}
+			else if (!file.extension().string().compare(".js")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/javascript");
+			}
 			else if (!file.extension().string().compare(".css")) {
 				std::string page = readFile(file.string());
 				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/css");
-			} else {
+			}
+			else if (!file.extension().string().compare(".html")) {
 				std::string page = readFile(file.string());
 				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/html");
+			}
+			else if (!file.extension().string().compare(".png")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/png");
+			}
+			else if (!file.extension().string().compare(".ico")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/x-icon");
+			}
+			else if (!file.extension().string().compare(".jpg")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/jpg");
+			}
+			else if (!file.extension().string().compare(".jpeg")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/jpeg");
+			}
+			else if (!file.extension().string().compare(".webp")) {
+				std::string page = readFile(file.string());
+				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/webp");
 			}
 		}
 		else 
 		{
-			std::cout << "404";
-			response_buf << HTTP404(date);
+			if (!file.extension().string().compare(".exe") ||
+				!file.extension().string().compare(".html")) {
+				std::cout << "404";
+				response_buf << HTTP404(date);
+			}
+			else {
+				response_buf << "HTTP/1.1 404 Not Found\n"												\
+					<< "Date : " << std::put_time(date, (char*)"%a, %d %b %Y %T %Z")		\
+					<< "\nServer: c_rver / 1.0.0 (Windows)\n"								\
+					<< "Connection: keep-alive\n"											\
+					<< "Referrer-Policy: strict-origin-when-cross-origin\r\n"				\
+					<< "Content-Type: text/html\n"											\
+					<< "Content-Length: 0\n"												\
+					<< "X-Content-Type-Options: nosniff\r\n\r\n";
+			}
 		}
 
-		sResponse_buf = response_buf.str();
+		sResponse_buf = response_buf.str() + "\r\n\0\0\0\0\0\0\0\0\0\0\0\0";
 
 		delete[] buffer.buf;
-		buffer = { (unsigned long)sResponse_buf.size(), (CHAR*)sResponse_buf.c_str() };
+		buffer = { (unsigned long)sResponse_buf.size()+2, (CHAR*)sResponse_buf.c_str() };
 
 		WSASend(CurrentSession, &buffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
 	};
 
-	std::cout << "Listener[" << i_currentSession << "] closed\n";
+	std::cout << "Listener closed\n";
 
 	delete[] buffer.buf;
 

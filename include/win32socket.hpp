@@ -50,7 +50,7 @@ public:
 
 	static void connexionListener(Server* s);
 
-	static int listener(Server* s, int currentSession);
+	static int listener(Server* s, Session newClient);
 
 	bool start();
 	void terminate();

@@ -14,7 +14,7 @@ HTTPRequest HTTP(WSABUF buffer, int len) {
 		req.GET = std::map<std::string, std::string >();
 		req.page = "";
 		request >> get >> get;
-		
+
 		// replace & and = to space to >> operator works
 		while ((pos = get.rfind('&')) != std::string::npos) {
 			get.erase(pos, 1);
@@ -62,7 +62,7 @@ HTTPRequest HTTP(WSABUF buffer, int len) {
 			}
 		}
 	}
-	else if(buffer.buf[0] == 'P') {
+	else if (buffer.buf[0] == 'P') {
 		req.method = POST;
 		req.POST = std::map<std::string, std::string >();
 		req.page = "";
@@ -87,5 +87,6 @@ HTTPRequest HTTP(WSABUF buffer, int len) {
 		request >> req.page;
 		req.page = req.page.substr(0, req.page.find('?'));
 	}
+	else return { none, "", "", {}, {}, 0 };
 	return req;
 }

@@ -11,7 +11,6 @@
 #endif
 
 /*
-fix send
 POST method
 conf.ini
 */
