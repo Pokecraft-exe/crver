@@ -5,6 +5,16 @@
 #include "win32_interProcessMemory.hpp"
 #include <fstream>
 #include <codecvt>
+#include <stdexcept>
+
+extern std::map<std::string, std::string> urls;
+extern std::map<std::string, std::string> endpoints;
+extern std::map<std::string, std::string> extentions;
+
+struct filebuf {
+	size_t size;
+	char* data;
+};
 
 /*
  * Constructor and operator for Session to act as the socket for simplicity
@@ -19,40 +29,48 @@ Session::~Session() { cache.~basic_string(); }
  */
 Server::Server(void) {};
 
+std::string timeToString(const std::tm* timeObj) {
+	std::ostringstream oss;
+	oss << std::put_time(timeObj, (char*)"%a, %d %b %Y %T %Z");
+	return oss.str();
+}
+
 /*
  * Returns all the content of a file 
  */
-std::string readFile(const std::string& filename) {
-	std::ifstream file(filename);
-	std::string contents;
+filebuf readFile(const std::string& filename) {
+	std::ifstream file(filename, std::ios::binary | std::ios::ate);
+	std::vector<char> contents;
 
 	// Check if the file was opened successfully
 	if (!file.is_open()) {
 		std::cerr << "Error opening file: " << filename << std::endl;
-		return "";
+		return {};
 	}
 
 	// Get the file's size
-	file.seekg(0, std::ios::end);
 	std::streampos fileSize = file.tellg();
 	file.seekg(0, std::ios::beg);
 
 	// Reserve memory for the string to avoid multiple reallocations
-	contents.reserve(fileSize);
+	contents.resize(fileSize);
 
 	// Read the file's contents into the string
-	contents.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+	if (!file.read(contents.data(), fileSize)) {
+		file.close();
+		throw std::runtime_error("cannot read the file " + filename);
+	}
 
 	// Close the file
 	file.close();
 
-	return contents;
+	return { fileSize, contents.data() };
 }
 
 /*
  * Execute a program with the session and the request
  */
-std::string exec(std::string cmd, Session* session, HTTPRequest* request) {
+char* executeAndDump(std::string cmd, Session* session, HTTPRequest* request) {
 	FILE* fp;
 	std::array<char, 0x1000> buffer;
 	std::string result;
@@ -87,7 +105,7 @@ std::string exec(std::string cmd, Session* session, HTTPRequest* request) {
 		result += buffer.data();
 	}
 
-	return result;
+	return (char*)result.c_str();
 }
 
 void Server::connexionListener(Server* s) {
@@ -131,20 +149,18 @@ int Server::listener(Server* s, Session newClient) {
 	std::string sResponse_buf = "";
 
 	while (status > 0) {
-		//SecureZeroMemory((PVOID)&RecvOverlapped, sizeof(WSAOVERLAPPED));
 		buffer = { 0x1000, new char[0x1000] };
 		ZeroMemory(buffer.buf, 0x1000);
 
-		//status = WSARecv(CurrentSession, &buffer, 1, &bytesSent, &flags, &RecvOverlapped, nullptr);
 		status = recv(CurrentSession, buffer.buf, buffer.len, 0);
 		if (status < 0)
 			wprintf(L"\trecv failed with error: %d\n", WSAGetLastError());
 
 		HTTPRequest request = HTTP(buffer, status);
-		std::stringstream response_buf;
+		char* responseBuffer = nullptr;
 		std::time_t t_date = time(nullptr);
 		std::tm* date = gmtime(&t_date);
-		std::filesystem::path file = s->dir + "." + request.page;
+		std::filesystem::path file = s->dir + "." + urls[request.page];
 
 		if (request.SESSION_ID == -1) {
 			std::wcout << "New client no " << NUM_CLIENTS();
@@ -165,40 +181,30 @@ int Server::listener(Server* s, Session newClient) {
 		// 404 ?
 		if (std::filesystem::exists(file)) 
 		{	// is compiled?
-			if (!file.extension().string().compare(".exe")) {
-				response_buf << exec(file.string(), &CurrentSession, &request);
+			if (endpoints[request.page].compare("throw") == 0) {
+				if (file.extension().string().compare(".exe") == 0) {
+					responseBuffer = executeAndDump(file.string(), &CurrentSession, &request);
+				}
+				else {
+					if (extentions.find(file.extension().string()) != extentions.end()) {
+						std::string page = readFile(file.string());
+						responseBuffer = HTTPResponse(date, page, page.size(), CurrentSession.id, extentions[file.extension().string()]);
+					}
+				}
 			}
-			else if (!file.extension().string().compare(".js")) {
+			else {
 				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/javascript");
-			}
-			else if (!file.extension().string().compare(".css")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/css");
-			}
-			else if (!file.extension().string().compare(".html")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "text/html");
-			}
-			else if (!file.extension().string().compare(".png")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/png");
-			}
-			else if (!file.extension().string().compare(".ico")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/x-icon");
-			}
-			else if (!file.extension().string().compare(".jpg")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/jpg");
-			}
-			else if (!file.extension().string().compare(".jpeg")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/jpeg");
-			}
-			else if (!file.extension().string().compare(".webp")) {
-				std::string page = readFile(file.string());
-				response_buf << HTTPResponse(date, page, page.size(), CurrentSession.id, "image/webp");
+				responseBuffer = (char*)(std::string("HTTP/1.1 200 OK\nDate : ") + timeToString(date) + \
+					"\nServer: c_rver / 2.0.0 (Windows)\n"								\
+					"Content-Disposition: attachment; filename=\"" + file.filename().string() + "\"\n"\
+					"Content-Length:" + std::to_string(page.size()) + "\n"						\
+					"Content-Transfer-Encoding: binary"									\
+					"Connection: keep-alive\n"											\
+					"Referrer-Policy: strict-origin-when-cross-origin\n"				\
+					"X-Content-Type-Options: nosniff\n"									\
+					"Set-Cookie: Session-ID=" + std::to_string(CurrentSession.id) + "\n"		\
+					"Feature-Policy: accelerometer 'none'; camera 'none'; geolocation 'none'; gyroscope 'none'; magnetometer 'none'; microphone 'none'; payment 'none'; usb 'none'\n" \
+					+ std::string(page) + "\r\n").c_str();
 			}
 		}
 		else 
@@ -206,21 +212,18 @@ int Server::listener(Server* s, Session newClient) {
 			if (!file.extension().string().compare(".exe") ||
 				!file.extension().string().compare(".html")) {
 				std::cout << "404";
-				response_buf << HTTP404(date);
+				responseBuffer = HTTP404(date);
 			}
 			else {
-				response_buf << "HTTP/1.1 404 Not Found\n"												\
-					<< "Date : " << std::put_time(date, (char*)"%a, %d %b %Y %T %Z")		\
-					<< "\nServer: c_rver / 1.0.0 (Windows)\n"								\
-					<< "Connection: keep-alive\n"											\
-					<< "Referrer-Policy: strict-origin-when-cross-origin\r\n"				\
-					<< "Content-Type: text/html\n"											\
-					<< "Content-Length: 0\n"												\
-					<< "X-Content-Type-Options: nosniff\r\n\r\n";
+				responseBuffer = (char*)(std::string("HTTP/1.1 404 Not Found\nDate : ") + timeToString(date) +
+					"\nServer: c_rver / 2.0.0 (Windows)\n"
+					"Connection: keep-alive\n"
+					"Referrer-Policy: strict-origin-when-cross-origin\r\n"
+					"Content-Type: text/html\n"
+					"Content-Length: 0\n"
+					"X-Content-Type-Options: nosniff\r\n\r\n").c_str();
 			}
 		}
-
-		sResponse_buf = response_buf.str() + "\r\n\0\0\0\0\0\0\0\0\0\0\0\0";
 
 		delete[] buffer.buf;
 		buffer = { (unsigned long)sResponse_buf.size()+2, (CHAR*)sResponse_buf.c_str() };
