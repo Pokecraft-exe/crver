@@ -11,41 +11,78 @@ the default port is 80
 the incoming request accept permissions are total (loopback, local, www)
 the default www folder is C:\testwww\
 
-## SECURITY ISSUES
-
-a request like
-``` {server}/../{...} ```
-is (for now) valid and can leak all your private data!
-
 ## link between server and the pages
 
-The new crver API uses ramdisk and RAM filesystems to share info between the page and the server.
+The new crver API uses IPM (an abstract of Memory Mapped Files) to share info between the pages and the server.
 
 ## CRVER API
 
 c++ example using crver.hpp file
 ```c++
+/**
+  * The name of the IPM should be the same as the server's
+  * I's defined in the config file under "ipm" : "..."
+  * you either choose a name of let the server decide with "." (auto)
+  * the "auto" mode takes the endpoint and adds IPM_ before
+  * 
+  * example:
+  * 
+  * "/index.exe" : {
+  *     "ipm" : ".", # => IPM_index.exe
+  *     "treat" : "throw"
+  * }
+  * 
+  * for the server, only the "ipm" field defines an executable and a regular file.
+  */
+#define IPM_NAME L"IPM_index.exe" // widen with L prefix (const wchar_t*)
 #include "includes/crver.hpp"
-int main(int argc, crver::ENV argv) {
-    MakeEnvironnemnt(env);
-    using std::cout, crver::endl;
+using crver::endl, std::cout;
 
-    cout << 
-"<html>" <<
-    "<body>" <<
-        "Hello from C++ dynamic page! method: " << (env.request.method == crver::GET ? "GET" : "POST") << 
-        " Bye Socket " << env.session.connexion << "!" << endl << 
-        env.request.GET.size() << endl;
+int WebMain(crver::HTTPRequest Request) {
+  crver::metaCharset("utf8");
+  crver::link("stylesheet", "text/css", "style.css");
 
-        for (auto i : env.request.GET) {
-            cout << i.first << " = " << i.second << endl;
-        }
+  crver::title((Request.GET.find("title") != Request.GET.end() ? Request.GET["title"] : "index"));
+  cout <<
+	  "  <body>"
+	  "    Hello from C++ page" << endl <<
+	  "    Ready to try the POST method?" << endl << 
+	  "    <form action=\"posttest.exe\" method=\"post\">"
+	  "       firstname:" << endl <<
+	  "       <input name=\"firstname\">" << endl <<
+	  "       lastname:" << endl <<
+	  "       <input name=\"lastname\">"
+	  "		  <input type=\"submit\">"
+	  "    </form>" << endl <<
+	  "    Ready to try the GET method?" << endl <<
+	  "    <form action=\"gettest.exe\" method=\"get\">"
+	  "       firstname:" << endl <<
+	  "       <input name=\"firstname\">" << endl <<
+	  "       lastname:" << endl <<
+	  "       <input name=\"lastname\">"
+	  "		  <input type=\"submit\">"
+	  "    </form>"
+	  "    <table>"
+	  "<thead>"
+	  "    <tr>"
+	  "    <th>"
+	  "      Name"
+	  "    </th>"
+	  "    <th>"
+	  "      Value"
+	  "    </th>"
+	  "  </tr>"
+	  "</thead>";
+for (auto i : Request.GET) {
+	cout << "<tr><td>" << i.first << "</td><td>" << i.second << "</td></tr>";
+}
+  cout <<
+	  "    </table>"
+	  "  </body>";
 
-cout <<
-    "</body>"
-"</html>";
-
-    return crver::HTTPResponse();
+  crver::HTTPResponse(200, "text/html");
+  return 0;
 }
 ```
 ![image](https://github.com/user-attachments/assets/1d8a0dbf-7f66-4c87-bf95-2c0991cf3e72)
+
