@@ -15,16 +15,25 @@
 #include <stdexcept>
 #include <cstdio>
 
-#define NUM_CLIENTS() s->ClientSessions.size()
+struct WebIPM {
+	bool busy;
+	bool requested;
+	bool reached;
+	bool partial;
+	SOCKET connexion;
+	char data[0x1000];
+};
+
+#define NUM_CLIENTS() sessions.size()
 #define DEFAULT_BUFLEN 512
 
 class Session {
 public:
+	bool running = false;
 	SOCKET connexion = INVALID_SOCKET;
 	int dest_len = 0;
 	size_t id = 0;
 	_Field_size_bytes_(dest_len) struct sockaddr destination = { 0 };
-	std::string cache = "";
 	Session(SOCKET);
 	Session(const Session&);
 	operator SOCKET();
@@ -41,10 +50,10 @@ private:
 	int recvbuflen = DEFAULT_BUFLEN;
 	WCHAR ws_addr[100] = { 0 };
 public:
-	char* port = 0;
+	bool should_stop = false;
+	std::string port = "";
 	std::string dir = "";
-	std::string temp = "";
-	std::vector<Session> ClientSessions = {};
+	std::string temp = "";;
 
 	Server();
 

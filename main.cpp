@@ -1,28 +1,98 @@
 #ifdef _WIN64 || _WIN32
 
 #include "win32socket.hpp"
+#include "ipm.hpp"
+#include <windows.h>
 #pragma comment(lib, "Ws2_32.lib")
-#define DEFAULT_CONFFILE "config.cfg"
 
 #else
 
-#error "made for windows"
+#error "made for windows (for now)"
 
 #endif
 
 #include <json.hpp>
 #include <map>
+#include <algorithm>
+#include <cctype>
+#include <functional>
+#define DEFAULT_CONFFILE "config.cfg"
+
 /*
 POST method
 */
 
+Server* s = nullptr;
+const char* ws = " \t\n\r\f\v";
+
+#ifdef _WIN64 || _WIN32
+
+/**
+ * Remap the console events to perform a cleanup
+ */
+BOOL WINAPI ConsoleEventHandler(DWORD event) {
+	switch (event) {
+	case CTRL_C_EVENT:
+		s->terminate();
+		std::cout << "Ctrl+C pressed. Cleaning up...\n";
+		return TRUE; // Prevent default behavior
+	case CTRL_CLOSE_EVENT:
+		s->terminate();
+		std::cout << "Console is closing. Performing cleanup...\n";
+		return TRUE; // Prevent default behavior
+	case CTRL_BREAK_EVENT:
+		s->terminate();
+		std::cout << "Ctrl+Break pressed. Handling...\n";
+		return TRUE;
+	case CTRL_LOGOFF_EVENT:
+	case CTRL_SHUTDOWN_EVENT:
+		s->terminate();
+		std::cout << "System is logging off or shutting down. Handling...\n";
+		return TRUE;
+	default:
+		return FALSE; // Let the system handle other events
+	}
+}
+
+#endif
+
+// trim from end of string (right)
+inline std::string& rtrim(std::string& s, const char* t = ws)
+{
+	s.erase(s.find_last_not_of(t) + 1);
+	return s;
+}
+
+// trim from beginning of string (left)
+inline std::string& ltrim(std::string& s, const char* t = ws)
+{
+	s.erase(0, s.find_first_not_of(t));
+	return s;
+}
+
+// trim from both ends of string (right then left)
+inline std::string& trim(std::string& s, const char* t = ws)
+{
+	return ltrim(rtrim(s, t), t);
+}
+
 std::map<std::string, std::string> urls;
 std::map<std::string, std::string> endpoints;
 std::map<std::string, std::string> extentions;
+std::map<std::string, std::string> cache;
+std::map<std::string, interProcessMemory<WebIPM>> ipms;
 
 int main(int argc, char** argv) {
-	Server* s = new Server();
+	s = new Server();
 	std::filesystem::path confFile;
+
+#ifdef _WIN64 || _WIN32
+	// Set the console control handler
+	if (!SetConsoleCtrlHandler(ConsoleEventHandler, TRUE)) {
+		std::cerr << "Error: Could not set control handler.\n";
+		return 1;
+	}
+#endif
 
 	confFile = DEFAULT_CONFFILE;
 
@@ -33,20 +103,49 @@ int main(int argc, char** argv) {
 		std::string dir = j["directory"].get<std::string>();
 		std::string temp = j["temporary"].get<std::string>();
 
-		s->port = (char*)port.c_str();
+		trim(port);
+		s->port = port;
 		s->dir = dir;
 		s->temp = temp;
 
         for (const auto& i : j["urls"].items()) { // Add reference (&) to avoid copying each item
-           std::string key = i.key();
-           std::string path = i.value()["path"].get<std::string>();
-           if (path.compare(".") == 0) path = key;
+			std::string key = i.key();
+			std::string path;
 
-           std::string method = i.value()["treat"].get<std::string>();
+			try {
+				path = i.value()["ipm"].get<std::string>();
 
-           urls[key] = path;
-           endpoints[key] = method;
-           std::cout << "url: " << key << " path: " << path << " treat: " << method << std::endl;
+				if (path.compare(".") == 0) path = "IPM_" + key.substr(1, key.length() - 1);
+				ipms[path].Open(std::wstring(path.begin(), path.end()).c_str());
+				interProcessMemory<WebIPM>* ipm = &ipms[path];
+
+				ipm->busy = false;
+				ipm->requested = false;
+				ipm->partial = false;
+				ipm->reached = false;
+				ipm->Global().update();
+
+				if (ipms[path].Ready() != IPM_SUCCESS) {
+					std::cerr << "Couldn't open IPM " << key << std::endl;
+					return 1;
+				}
+			}
+			catch (std::exception e) {
+				try {
+					path = i.value()["path"].get<std::string>();
+
+					if (path.compare(".") == 0) path = key;
+				}
+				catch (std::exception ee) {
+					std::cerr << "JSON is invalid, can't find `path' or `ipm' at `" << key << "'" << std::endl;
+					return 1;
+				}
+			}
+			std::string method = i.value()["treat"].get<std::string>();
+
+			urls[key] = path;
+			endpoints[key] = method;
+			std::cout << "url: " << key << " path: " << path << " treat: " << method << std::endl;
         }
 
 		for (const auto& i : j["extentions"].items()) {
@@ -68,10 +167,20 @@ int main(int argc, char** argv) {
 		std::cout << "configuration default\nport: 80\ndirectory: " << s->dir << "\ntemporary directory (ramdisk preferred): " << s->temp << std::endl;
 	}
 
+	// start the pages
+	for (auto& i : ipms) {
+		std::filesystem::path path = s->dir + i.first.substr(4, i.first.length() - 4);
+		_popen(path.string().c_str(), "r");
+		std::cout << "Starting page: " << path.string() << std::endl;
+	}
+
 	if (!s->start()) {
 		s->terminate();
+		delete s;
 		return 1;
 	}
 
 	s->terminate();
+	delete s;
+	return 0;
 }

@@ -1,35 +1,62 @@
 #define _CRT_SECURE_NO_WARNINGS
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include "win32socket.hpp"
-#include "http.hpp"
+#include <ws2tcpip.h>
+#include <mstcpip.h>  // Required for tcp_keepalive
 #include "compress.hpp"
-#include "win32_interProcessMemory.hpp"
+#include "ipm.hpp"
 #include <fstream>
+#include <array>
 #include <codecvt>
 #include <stdexcept>
+#include <map>
+
+#define HTTPResponse(DATE, CONTENT, LEN, SESSIONID, CONTENT_TYPE) \
+				(char*)(std::string("HTTP/1.1 200 OK\nDate : ") + timeToString(DATE) +		\
+				"\nServer: c_rver / 2.0.0 (Windows)\n"								\
+				"Content-Type: " + CONTENT_TYPE + "\n"					\
+				"Content-Length:" + std::to_string(LEN) + "\n"						\
+				"Connection: keep-alive\n"											\
+				"Referrer-Policy: strict-origin-when-cross-origin\n"				\
+				"X-Content-Type-Options: nosniff\n"									\
+				"Set-Cookie: Session-ID=" + std::to_string(SESSIONID) + "\n"		\
+				"Feature-Policy: accelerometer 'none'; camera 'none'; geolocation 'none'; gyroscope 'none'; magnetometer 'none'; microphone 'none'; payment 'none'; usb 'none'\n" \
+				+ std::string(CONTENT) + "\r\n").c_str()
+
+#define HTTP404(DATE) \
+						(char*)(std::string("HTTP/1.1 404 Not Found\nDate : ") + timeToString(date) + \
+						"\nServer: c_rver / 2.0.0 (Windows)\n"\
+						"Connection: keep-alive\n"\
+						"Referrer-Policy: strict-origin-when-cross-origin\r\n"\
+						"Content-Type: text/html\n"\
+						"Content-Length: 148\n"\
+						"X-Content-Type-Options: nosniff\r\n\r\n"\
+						"<html><head><title>404 Not Found</title></head><body><center>"\
+						"<h1>404 Not Found</h1></center><hr><center>c_rver/1.0.0 (Windows)"\
+						"</center></body></html>\r\n").c_str()
 
 extern std::map<std::string, std::string> urls;
 extern std::map<std::string, std::string> endpoints;
 extern std::map<std::string, std::string> extentions;
+extern std::map<std::string, std::string> cache;
+extern std::map<std::string, interProcessMemory<WebIPM>> ipms;
 
-struct filebuf {
-	size_t size;
-	char* data;
-};
+std::vector<Session> sessions = {};
 
 /*
  * Constructor and operator for Session to act as the socket for simplicity
  */
 Session::Session(SOCKET sock) { connexion = sock; dest_len = sizeof(sockaddr); }
-Session::Session(const Session& sess) { connexion = sess.connexion; dest_len = sess.dest_len; id = sess.id; destination = sess.destination; cache = sess.cache; }
+Session::Session(const Session& sess) { connexion = sess.connexion; dest_len = sess.dest_len; id = sess.id; destination = sess.destination; }
 Session::operator SOCKET() { return connexion; }
-Session::~Session() { cache.~basic_string(); }
+Session::~Session() { }
 
 /*
  * Constructor for Server
  */
 Server::Server(void) {};
 
-std::string timeToString(const std::tm* timeObj) {
+inline std::string timeToString(const std::tm* timeObj) {
 	std::ostringstream oss;
 	oss << std::put_time(timeObj, (char*)"%a, %d %b %Y %T %Z");
 	return oss.str();
@@ -38,74 +65,123 @@ std::string timeToString(const std::tm* timeObj) {
 /*
  * Returns all the content of a file 
  */
-filebuf readFile(const std::string& filename) {
-	std::ifstream file(filename, std::ios::binary | std::ios::ate);
-	std::vector<char> contents;
+inline bool readFile(const std::filesystem::path& filename, Session s, bool isUpload) {
+	std::ifstream file(filename, std::ios::binary);
+	std::array<char, 0x1000> contents;
+	unsigned long bytesSent = 0;
+	WSABUF buffer = { 0x1000, contents.data() };
+	std::time_t t_date = time(nullptr);
+	std::tm* date = gmtime(&t_date);
+	std::string header = "";
 
 	// Check if the file was opened successfully
 	if (!file.is_open()) {
 		std::cerr << "Error opening file: " << filename << std::endl;
-		return {};
+		return false;
 	}
 
 	// Get the file's size
+	file.seekg(0, std::ios::end);
 	std::streampos fileSize = file.tellg();
 	file.seekg(0, std::ios::beg);
+	
+	// Send the header
+	if (isUpload) {
+		header = "HTTP/1.1 200 OK\nDate : " + timeToString(date) +				\
+			"\nServer: c_rver / 2.0.0 (Windows)\n"								\
+			"Content-Disposition: attachment; filename=\"" + filename.filename().string() + "\"\n"\
+			"Content-Length:" + std::to_string(fileSize) + "\n"					\
+			"Content-Transfer-Encoding: binary"									\
+			"Connection: keep-alive\n"											\
+			"Referrer-Policy: strict-origin-when-cross-origin\n"				\
+			"X-Content-Type-Options: nosniff\n"									\
+			"Set-Cookie: Session-ID=" + std::to_string(s.id) + "\r\n\r\n";
+		ZeroMemory(buffer.buf, 0x1000);
+		memcpy(buffer.buf, header.c_str(), header.length());
+	}
+	else {
+		header = "HTTP/1.1 200 OK\nDate : " + timeToString(date) +				\
+			"\nServer: c_rver / 2.0.0 (Windows)\n"								\
+			"Content-Length:" + std::to_string(fileSize) + "\n"					\
+			"Content-Type: " + extentions[filename.extension().string()] + "\n"	\
+			"Connection: keep-alive\n"											\
+			"Referrer-Policy: strict-origin-when-cross-origin\n"				\
+			"X-Content-Type-Options: nosniff\n"									\
+			"Set-Cookie: Session-ID=" + std::to_string(s.id) + "\r\n\r\n";
+		ZeroMemory(buffer.buf, 0x1000);
+		memcpy(buffer.buf, header.c_str(), header.length());
+	}
+ 
+	buffer.len = header.size();
+	WSASend(s, &buffer, 1, &bytesSent, MSG_DONTROUTE | MSG_PARTIAL, NULL, NULL);
+	if (bytesSent == 0) {
+		std::cerr << "Error sending header: " << WSAGetLastError() << std::endl;
+		ZeroMemory(buffer.buf, 0x1000);
+		return false;
+	}
+	buffer.len = 0x1000;
+	// Clear contents after sending
+	ZeroMemory(buffer.buf, 0x1000);
 
-	// Reserve memory for the string to avoid multiple reallocations
-	contents.resize(fileSize);
-
-	// Read the file's contents into the string
-	if (!file.read(contents.data(), fileSize)) {
-		file.close();
-		throw std::runtime_error("cannot read the file " + filename);
+	// Read the file 1kb by 1kb
+	while (file) {
+		file.read(buffer.buf, buffer.len);	
+		WSASend(s, &buffer, 1, &bytesSent, MSG_DONTROUTE | MSG_PARTIAL, NULL, NULL);
+		if (bytesSent == 0) {
+			std::cerr << "Error sending file: " << WSAGetLastError() << std::endl;
+			ZeroMemory(buffer.buf, 0x1000);
+			return false;
+		}
+		ZeroMemory(buffer.buf, 0x1000);
+		// Check if the end of the file has been reached
+		if (file.gcount() == 0)	break;
 	}
 
 	// Close the file
 	file.close();
-
-	return { fileSize, contents.data() };
+	return true;
 }
 
 /*
  * Execute a program with the session and the request
  */
-char* executeAndDump(std::string cmd, Session* session, HTTPRequest* request) {
+inline bool executeAndDump(std::string cmd, Session* session, char* request) {
 	FILE* fp;
-	std::array<char, 0x1000> buffer;
-	std::string result;
-
-	std::ofstream osCacheFile(session->cache, std::ios::out | std::ios::binary);
+	WSABUF buffer = { 0x1000, NULL };
 	std::string sSize = std::to_string(sizeof(Session)) + "\n";
+	unsigned long bytesSent = 0;
 
-	osCacheFile << session->connexion;
-	osCacheFile << " ";
-	osCacheFile << (int)request->method << " ";
-	if (request->method == GET) {
-		for (auto i : request->GET) {
-			osCacheFile << i.first << " " << i.second << " ";
-		}
-	}
-	else {
-		std::cout << "writting POST method to cache file is not supported yet!\n";
-	}
+	interProcessMemory<WebIPM>* ipm = &ipms[cmd];
 
-	osCacheFile.close();
+	while (ipm->busy) {};
 
-	cmd += " " + session->cache;
+	ipm->busy = true;
+	ipm->requested = true;
+	ipm->reached = false;
+	ipm->partial = false;
+	CopyMemory(ipm->data, request, sizeof(Session));
+	ipm->Global().update();
 
-	// Open the command for reading
-	fp = _popen(cmd.c_str(), "r");
-	if (fp == NULL) {
-		printf("Failed to run command\n");
+	// wait for the process to finish
+	while (!ipm->reached) {
+		ipm->Local().update();
 	}
 
-	// Read the output a line at a time - output it
-	while (fgets(buffer.data(), 0x1000 - 1, fp) != NULL) {
-		result += buffer.data();
-	}
+	buffer.buf = ipm->Direct()->data;
 
-	return (char*)result.c_str();
+	WSASend(session->connexion, &buffer, 1, &bytesSent, MSG_DONTROUTE | MSG_PARTIAL, NULL, NULL);
+	if (bytesSent == 0) {
+		std::cerr << "Error sending file: " << WSAGetLastError() << std::endl;
+		ZeroMemory(buffer.buf, 0x1000);
+		return false;
+	}
+	ZeroMemory(buffer.buf, 0x1000);
+	
+	ipm->busy = false;
+	ipm->reached = false;
+	ipm->Global().update();
+
+	return true;
 }
 
 void Server::connexionListener(Server* s) {
@@ -113,7 +189,7 @@ void Server::connexionListener(Server* s) {
 
 	std::cout << "Listening for incoming connexions...\n";
 
-	while (1) {
+	while (1 && !s->should_stop) {
 		if (listen(s->ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
 			printf("Listen failed with error: %ld\n", WSAGetLastError());
 			closesocket(s->ListenSocket);
@@ -123,7 +199,7 @@ void Server::connexionListener(Server* s) {
 
 		// Accept a client socket
 		Session newClient = INVALID_SOCKET;
-		newClient.connexion = WSAAccept(s->ListenSocket, &newClient.destination, &newClient.dest_len, nullptr, 0);
+		newClient.connexion = WSAAccept(s->ListenSocket, &newClient.destination, &newClient.dest_len, nullptr,(DWORD_PTR) nullptr);
 		if (newClient == INVALID_SOCKET) {
 			printf("accept failed: %d\n", WSAGetLastError());
 			closesocket(s->ListenSocket);
@@ -131,8 +207,22 @@ void Server::connexionListener(Server* s) {
 			break;
 		}
 		else {
-			InetNtop(s->hints.ai_family, &newClient.destination, s->ws_addr, 100);
+			int optval = 1;
+			setsockopt(newClient, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
+			setsockopt(newClient, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, sizeof(optval));
+			setsockopt(newClient, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
+			struct tcp_keepalive ka;
+			ka.onoff = 1;
+			ka.keepalivetime = 30000;  // Time before sending first keep-alive probe (30s)
+			ka.keepaliveinterval = 10000; // Interval between probes (10s)
 
+			DWORD dwBytesReturned;
+			WSAIoctl(newClient, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &dwBytesReturned, nullptr, nullptr);
+			//InetNtop(s->hints.ai_family, &newClient.destination, s->ws_addr, 100);
+
+			//listener(s, newClient);
+
+			newClient.running = true;
 			std::thread t = std::thread(listener, s, newClient);
 			t.detach();
 		}
@@ -143,96 +233,93 @@ void Server::connexionListener(Server* s) {
 int Server::listener(Server* s, Session newClient) {
 	int status = 1;
 	Session CurrentSession = newClient;
-	WSAOVERLAPPED RecvOverlapped;
-	WSABUF buffer;
-	DWORD bytesSent = 0, flags = 0;
-	std::string sResponse_buf = "";
+	size_t clientNumber = 0;
+	WSABUF buffer = { DEFAULT_BUFLEN, new char[0x1000]};
 
-	while (status > 0) {
-		buffer = { 0x1000, new char[0x1000] };
-		ZeroMemory(buffer.buf, 0x1000);
+	while (status > 0 && !s->should_stop) {
 
 		status = recv(CurrentSession, buffer.buf, buffer.len, 0);
 		if (status < 0)
 			wprintf(L"\trecv failed with error: %d\n", WSAGetLastError());
 
-		HTTPRequest request = HTTP(buffer, status);
-		char* responseBuffer = nullptr;
 		std::time_t t_date = time(nullptr);
 		std::tm* date = gmtime(&t_date);
-		std::filesystem::path file = s->dir + "." + urls[request.page];
-
-		if (request.SESSION_ID == -1) {
-			std::wcout << "New client no " << NUM_CLIENTS();
-			newClient.cache = s->temp + "crver_session_" + std::to_string(NUM_CLIENTS()) + ".tmp";
-			s->ClientSessions.push_back(newClient);
-			CurrentSession.cache = newClient.cache;
+		std::string page;
+		
+		{
+			std::stringstream r(buffer.buf);
+			std::string junk;
+			r >> junk >> junk;
+			r >> page;
+			r = std::stringstream(junk);
+			r >> page;
+			page = page.substr(0, page.find('?'));
 		}
 
-		std::cout << "Requested page : " << request.page << " method : " << (request.method == GET ? "GET" : (request.method == POST ? "POST" : "none")) << " Client: " << CurrentSession.id;
+		std::filesystem::path file;
 
-		if (request.method == none) {
-			status = 0;
-			break;
-		}
+		clientNumber = NUM_CLIENTS();
+		//sessions.push_back(newClient);
 
-		if (!request.page.compare(""))
-			return 0;
 		// 404 ?
-		if (std::filesystem::exists(file)) 
-		{	// is compiled?
-			if (endpoints[request.page].compare("throw") == 0) {
-				if (file.extension().string().compare(".exe") == 0) {
-					responseBuffer = executeAndDump(file.string(), &CurrentSession, &request);
+		if (urls.find(page) != urls.end())
+		{
+			file = s->dir + "." + urls[page];;
+			if (file.extension().string().compare(".exe") == 0) {
+				if (endpoints[page].compare("throw") == 0) {
+					bool sent = executeAndDump(urls[page], &CurrentSession, buffer.buf);
 				}
 				else {
 					if (extentions.find(file.extension().string()) != extentions.end()) {
-						std::string page = readFile(file.string());
-						responseBuffer = HTTPResponse(date, page, page.size(), CurrentSession.id, extentions[file.extension().string()]);
+						bool sent = readFile(file.string(), CurrentSession, true);
+						if (!sent) {
+							std::cerr << "Error sending file: " << file.string() << std::endl;
+							break;
+						}
 					}
 				}
 			}
 			else {
-				std::string page = readFile(file.string());
-				responseBuffer = (char*)(std::string("HTTP/1.1 200 OK\nDate : ") + timeToString(date) + \
-					"\nServer: c_rver / 2.0.0 (Windows)\n"								\
-					"Content-Disposition: attachment; filename=\"" + file.filename().string() + "\"\n"\
-					"Content-Length:" + std::to_string(page.size()) + "\n"						\
-					"Content-Transfer-Encoding: binary"									\
-					"Connection: keep-alive\n"											\
-					"Referrer-Policy: strict-origin-when-cross-origin\n"				\
-					"X-Content-Type-Options: nosniff\n"									\
-					"Set-Cookie: Session-ID=" + std::to_string(CurrentSession.id) + "\n"		\
-					"Feature-Policy: accelerometer 'none'; camera 'none'; geolocation 'none'; gyroscope 'none'; magnetometer 'none'; microphone 'none'; payment 'none'; usb 'none'\n" \
-					+ std::string(page) + "\r\n").c_str();
+				bool sent = readFile(file.string(), CurrentSession, false);
+				if (!sent) {
+					std::cerr << "Error sending file: " << file.string() << std::endl;
+					break;
+				}
 			}
 		}
 		else 
 		{
+			std::string s = "";
+
 			if (!file.extension().string().compare(".exe") ||
 				!file.extension().string().compare(".html")) {
-				std::cout << "404";
-				responseBuffer = HTTP404(date);
+				s = HTTP404(date);
 			}
 			else {
-				responseBuffer = (char*)(std::string("HTTP/1.1 404 Not Found\nDate : ") + timeToString(date) +
+				s = "HTTP/1.1 404 Not Found\nDate : " + timeToString(date) +
 					"\nServer: c_rver / 2.0.0 (Windows)\n"
 					"Connection: keep-alive\n"
 					"Referrer-Policy: strict-origin-when-cross-origin\r\n"
 					"Content-Type: text/html\n"
 					"Content-Length: 0\n"
-					"X-Content-Type-Options: nosniff\r\n\r\n").c_str();
+					"X-Content-Type-Options: nosniff\r\n\r\n";
+			}
+
+			WSABUF buffer = { s.length(), s.data() };
+			unsigned long bytesSent = 0;
+			WSASend(CurrentSession, &buffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
+			if (bytesSent == 0) {
+				std::cerr << "Error sending header: " << WSAGetLastError() << std::endl;
+				ZeroMemory(buffer.buf, buffer.len);
+				break;
 			}
 		}
-
-		delete[] buffer.buf;
-		buffer = { (unsigned long)sResponse_buf.size()+2, (CHAR*)sResponse_buf.c_str() };
-
-		WSASend(CurrentSession, &buffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
 	};
 
-	std::cout << "Listener closed\n";
-
+	//std::cout << "Listener closed" << std::endl;
+	//sessions[clientNumber].running = false;
+	closesocket(CurrentSession);
+	//sessions.erase(sessions.begin() + clientNumber-1);
 	delete[] buffer.buf;
 
 	return 0;
@@ -246,7 +333,7 @@ bool Server::start(void) {
 	hints.ai_protocol = IPPROTO_TCP;
 	hints.ai_flags = AI_PASSIVE;
 
-	if (getaddrinfo(NULL, port, &hints, &result) != 0) {
+	if (getaddrinfo(NULL, port.c_str(), &hints, &result) != 0) {
 		std::cout << "Failed to start socket.." << std::endl;
 		return 1;
 	}
@@ -268,6 +355,12 @@ bool Server::start(void) {
 		return 1;
 	}
 
+
+	int optval = 1;
+	setsockopt(ListenSocket, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
+	setsockopt(ListenSocket, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, sizeof(optval));
+	setsockopt(ListenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
+
 	hints.ai_addr = result->ai_addr;
 	hints.ai_addrlen = result->ai_addrlen;
 
@@ -280,6 +373,37 @@ bool Server::start(void) {
 }
 
 void Server::terminate(void) {
+	bool isOneClientRunning = false;
+	should_stop = true;
+
+	// wait for all threads to finish
+	for (auto& client : sessions) {
+		if (client.running) {
+			closesocket(client);
+		}
+	}
+
+	// verify if the clients are still running
+	while (isOneClientRunning) {
+		isOneClientRunning = false;
+		for (auto& client : sessions) {
+			if (client.running) {
+				isOneClientRunning = true;
+				break;
+			}
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	// close the listening socket
+	if (ListenSocket != INVALID_SOCKET) {
+		closesocket(ListenSocket);
+		ListenSocket = INVALID_SOCKET;
+	}
+
+	sessions.erase(sessions.begin(), sessions.end());
+	cache.erase(cache.begin(), cache.end());
+
 	WSACleanup();
 	return;
 }
