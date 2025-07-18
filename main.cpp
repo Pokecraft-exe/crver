@@ -1,6 +1,14 @@
-#ifdef _WIN64 || _WIN32
+#include <json.hpp>
+#include <map>
+#include <algorithm>
+#include <cctype>
+#include <functional>
+#include <queue>
+#include "Socket.hpp"
+#define DEFAULT_CONFFILE "config.cfg"
 
-#include "win32socket.hpp"
+#ifdef _WIN64 || _WIN32
+#define LIBSSH_STATIC
 #include "ipm.hpp"
 #include <windows.h>
 #pragma comment(lib, "Ws2_32.lib")
@@ -11,18 +19,12 @@
 
 #endif
 
-#include <json.hpp>
-#include <map>
-#include <algorithm>
-#include <cctype>
-#include <functional>
-#define DEFAULT_CONFFILE "config.cfg"
-
 /*
 POST method
 */
 
-Server* s = nullptr;
+const QUIC_API_TABLE* MsQuic;
+HTTP_Server* s = nullptr;
 const char* ws = " \t\n\r\f\v";
 
 #ifdef _WIN64 || _WIN32
@@ -56,6 +58,25 @@ BOOL WINAPI ConsoleEventHandler(DWORD event) {
 
 #endif
 
+class pjson : public nlohmann::json {
+public:
+	pjson(nlohmann::json j) : nlohmann::json(j) {
+	}
+
+	template<typename T>
+	T tryGetJson(std::string key) {
+		T value;
+		try {
+			value = this->operator[](key).get<T>();
+		}
+		catch (exception e) {
+			std::cout << "Element " << key << " was not found in the config file.";
+			terminate();
+		}
+		return value;
+	}
+};
+
 // trim from end of string (right)
 inline std::string& rtrim(std::string& s, const char* t = ws)
 {
@@ -81,10 +102,17 @@ std::map<std::string, std::string> endpoints;
 std::map<std::string, std::string> extentions;
 std::map<std::string, std::string> cache;
 std::map<std::string, interProcessMemory<WebIPM>> ipms;
+std::map < std::string, std::queue<std::thread::id>> queues;
 
 int main(int argc, char** argv) {
-	s = new Server();
+	s = new HTTP_Server();
 	std::filesystem::path confFile;
+
+	QUIC_STATUS Status;
+	if (QUIC_FAILED(Status = MsQuicOpen2(&MsQuic))) {
+		printf("MsQuicOpen2 failed, 0x%x!\n", Status);
+		return 0;
+	}
 
 #ifdef _WIN64 || _WIN32
 	// Set the console control handler
@@ -98,15 +126,28 @@ int main(int argc, char** argv) {
 
 	if (std::filesystem::exists(confFile)) {
 		std::ifstream file(confFile);
-		nlohmann::json j = nlohmann::json::parse(file);
-		std::string port = j["port"].get<std::string>();
-		std::string dir = j["directory"].get<std::string>();
-		std::string temp = j["temporary"].get<std::string>();
+		pjson j = nlohmann::json::parse(file);
+		std::string port = j.tryGetJson<std::string>("port");
+		std::string dir = j.tryGetJson<std::string>("directory");
+		std::string temp = j.tryGetJson<std::string>("temporary");
+		std::string key = j.tryGetJson<std::string>("key");
+		std::string cert = j.tryGetJson<std::string>("cert");
 
 		trim(port);
 		s->port = port;
 		s->dir = dir;
 		s->temp = temp;
+		s->key = dir + key;
+		s->cert = dir + cert;
+
+		// verify port is an integer
+		if (!std::all_of(port.begin(), port.end(), ::isdigit) || port.empty()) {
+			std::cerr << "Error: Port must be a valid number" << std::endl;
+			return 1;
+		}
+
+		std::cout << "Certificate file: " << s->cert << '\n';
+		std::cout << "Key file: " << s->key << '\n';
 
         for (const auto& i : j["urls"].items()) { // Add reference (&) to avoid copying each item
 			std::string key = i.key();
