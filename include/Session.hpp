@@ -1,6 +1,6 @@
 #pragma once
 #ifdef __linux__
-typedef unsigned __int64 SOCKET;
+typedef unsigned long long int SOCKET;
 #endif
 
 #include <msquic/msquic.h>

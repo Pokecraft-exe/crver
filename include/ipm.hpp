@@ -7,6 +7,9 @@
 #define IPM_LINUX
 #endif
 
+#define IN
+#define OUT
+
 // Platform-specific includes
 #ifdef IPM_WINDOWS
 #include <windows.h>

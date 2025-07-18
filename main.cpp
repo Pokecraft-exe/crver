@@ -4,18 +4,19 @@
 #include <cctype>
 #include <functional>
 #include <queue>
+#include "ipm.hpp"
 #include "Socket.hpp"
 #define DEFAULT_CONFFILE "config.cfg"
 
 #ifdef _WIN64 || _WIN32
+
 #define LIBSSH_STATIC
-#include "ipm.hpp"
 #include <windows.h>
 #pragma comment(lib, "Ws2_32.lib")
 
 #else
 
-#error "made for windows (for now)"
+#define _popen(x, y) popen(x, y)
 
 #endif
 
@@ -71,7 +72,7 @@ public:
 		}
 		catch (exception e) {
 			std::cout << "Element " << key << " was not found in the config file.";
-			terminate();
+			std::terminate();
 		}
 		return value;
 	}
@@ -102,7 +103,7 @@ std::map<std::string, std::string> endpoints;
 std::map<std::string, std::string> extentions;
 std::map<std::string, std::string> cache;
 std::map<std::string, interProcessMemory<WebIPM>> ipms;
-std::map < std::string, std::queue<std::thread::id>> queues;
+std::map<std::string, std::queue<std::thread::id>> queues;
 
 int main(int argc, char** argv) {
 	s = new HTTP_Server();
@@ -157,7 +158,7 @@ int main(int argc, char** argv) {
 				path = i.value()["ipm"].get<std::string>();
 
 				if (path.compare(".") == 0) path = "IPM_" + key.substr(1, key.length() - 1);
-				ipms[path].Open(std::wstring(path.begin(), path.end()).c_str());
+				ipms[path].Open(IPM_STRING(path.begin(), path.end()).c_str());
 				interProcessMemory<WebIPM>* ipm = &ipms[path];
 
 				ipm->busy = false;

@@ -8,43 +8,21 @@ constexpr size_t BUFFER_SIZE = 0x1000;
 constexpr DWORD KEEPALIVE_INTERVAL_MS = 10000;  // 10 seconds
 
 #if defined(__linux__)
-typedef unsigned long DWORD;
-typedef unsigned long* LPDWORD;
-typedef void* DWORD_PTR;
-typedef int socklen_t;
 
-typedef struct {
-	unsigned long len;
-	char* buf;
-} WSABUF;
-
-#define INVALID_SOCKET (SOCKET)(~0)
-#define SOCKET_ERROR (-1)
-#define SOMAXCONN 128
-#define MSG_DONTROUTE 0
-#define MSG_PARTIAL 0
-#define SO_KEEPALIVE 9
-#define SO_REUSEADDR 2
-#define TCP_NODELAY 1
-#define IPPROTO_TCP 6
-#define SOL_SOCKET 1
-
-#define closesocket(x) close(x)
-#define WSAGetLastError() errno()
-
-inline int WSARecv(SOCKET s, WSABUF* lpBuffers, DWORD dwBufferCount, LPDWORD lpNumberOfBytesRecvd, LPDWORD lpFlags) {
+inline int WSARecv(SOCKET s, WSABUF* lpBuffers, DWORD dwBufferCount, LPDWORD lpNumberOfBytesRecvd, LPDWORD lpFlags, int null1, int null2) {
 	if (dwBufferCount != 1) return SOCKET_ERROR;
 	int result = recv(s, lpBuffers[0].buf, lpBuffers[0].len, lpFlags ? *lpFlags : 0);
 	if (result >= 0 && lpNumberOfBytesRecvd) *lpNumberOfBytesRecvd = result;
 	return result >= 0 ? 0 : SOCKET_ERROR;
 }
 
-inline int WSASend(SOCKET s, WSABUF* lpBuffers, DWORD dwBufferCount, LPDWORD lpNumberOfBytesSent, DWORD dwFlags) {
+inline int WSASend(SOCKET s, WSABUF* lpBuffers, DWORD dwBufferCount, LPDWORD lpNumberOfBytesSent, DWORD dwFlags, int null1, int null2) {
 	if (dwBufferCount != 1) return SOCKET_ERROR;
 	int result = send(s, lpBuffers[0].buf, lpBuffers[0].len, dwFlags);
 	if (result >= 0 && lpNumberOfBytesSent) *lpNumberOfBytesSent = result;
 	return result >= 0 ? 0 : SOCKET_ERROR;
 }
+
 #endif
 
 extern std::map<std::string, std::string> urls;
@@ -220,7 +198,11 @@ void connectionListener(HTTP_Server* s) {
 		}
 
 		Session* newClient = new Session(INVALID_SOCKET);
-		newClient->NEW_CONNECTION.http.Connection = WSAAccept(s->ListenSocket, &newClient->NEW_CONNECTION.http.Destination, &newClient->NEW_CONNECTION.http.Dest_len, nullptr, (DWORD_PTR) nullptr);
+		#ifdef _WIN64 || _WIN32
+			newClient->NEW_CONNECTION.http.Connection = WSAAccept(s->ListenSocket, &newClient->NEW_CONNECTION.http.Destination, &newClient->NEW_CONNECTION.http.Dest_len, nullptr, (DWORD_PTR) nullptr);
+		#else
+			newClient->NEW_CONNECTION.http.Connection = accept(s->ListenSocket, &newClient->NEW_CONNECTION.http.Destination, &newClient->NEW_CONNECTION.http.Dest_len);
+		#endif
 		if (newClient->NEW_CONNECTION.http.Connection == INVALID_SOCKET) {
 			printf("accept failed: %d\n", WSAGetLastError());
 			closesocket(s->ListenSocket);
@@ -228,20 +210,21 @@ void connectionListener(HTTP_Server* s) {
 			break;
 		}
 		else {
-			int optval = 1;
-			setsockopt(newClient->NEW_CONNECTION.http.Connection, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
-			setsockopt(newClient->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, sizeof(optval));
-			setsockopt(newClient->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
-			struct tcp_keepalive ka;
-			ka.onoff = 1;
-			ka.keepalivetime = 30000;  // Time before sending first keep-alive probe (30s)
-			ka.keepaliveinterval = KEEPALIVE_INTERVAL_MS; // Interval between probes (10s)
+			#ifdef _WIN64 || _WIN32
+				int optval = 1;
+				setsockopt(newClient->NEW_CONNECTION.http.Connection, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
+				setsockopt(newClient->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, sizeof(optval));
+				setsockopt(newClient->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
+				struct tcp_keepalive ka;
+				ka.onoff = 1;
+				ka.keepalivetime = 30000;  // Time before sending first keep-alive probe (30s)
+				ka.keepaliveinterval = KEEPALIVE_INTERVAL_MS; // Interval between probes (10s)
 
-			DWORD dwBytesReturned;
-			WSAIoctl(newClient->NEW_CONNECTION.http.Connection, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &dwBytesReturned, nullptr, nullptr);
-
+				DWORD dwBytesReturned;
+				WSAIoctl(newClient->NEW_CONNECTION.http.Connection, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &dwBytesReturned, nullptr, nullptr);
+			#endif
 			newClient->active = true;
-            std::thread t = std::thread(listener, s, newClient);
+			std::thread t = std::thread(listener, s, newClient);
 			t.detach();
 		}
 	}
@@ -361,7 +344,7 @@ bool HTTP_Server::start(void) {
 
 	SOCKET ListenSocket = socket(AF_INET, SOCK_STREAM, 0);
 
-	bind(ListenSocket, (sockaddr*)&server_sockaddr_in, sizeof(server_address_in));
+	bind(ListenSocket, (sockaddr*)&server_address_in, sizeof(server_address_in));
 #else
 	WSADATA dat;
 	addrinfo hints, * result = NULL;
