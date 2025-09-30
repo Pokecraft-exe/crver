@@ -1,0 +1,13 @@
+.vs/
+.vscode/
+c rver/
+lib/
+include/msquic/
+x64/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+msquic.dll
+quic.cpp
+install.sh
