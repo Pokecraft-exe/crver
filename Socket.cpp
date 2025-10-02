@@ -41,7 +41,7 @@ inline int WSASend(SOCKET s, WSABUF* lpBuffers, DWORD dwBufferCount, LPDWORD lpN
 #endif
 
 extern std::map<std::string, std::string> urls;
-extern std::map<std::string, std::string> endpoints;
+extern std::map<std::string, endpoint_type> endpoints;
 extern std::map<std::string, std::string> extentions;
 extern std::map<std::string, std::string> cache;
 extern std::map<std::string, void*> webMains;
@@ -152,8 +152,9 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 	}
 
 	buffer.len = header.size();
-	WSASend(s, &buffer, 1, &bytesSent, MSG_DONTROUTE | MSG_PARTIAL, NULL, NULL);
-	if (bytesSent == 0) {
+	WSASend(s, &buffer, 1, &bytesSent, MSG_PARTIAL, NULL, NULL);
+	int error = WSAGetLastError();
+	if (bytesSent == 0 && error != 10053) {
 		std::cerr << "Error sending header: " << WSAGetLastError() << std::endl;
 		ZeroMemory(buffer.buf, BUFFER_SIZE);
 		return false;
@@ -165,7 +166,7 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 	// Read the file 1kb by 1kb
 	while (file) {
 		file.read(buffer.buf, buffer.len);
-		WSASend(s, &buffer, 1, &bytesSent, MSG_DONTROUTE | MSG_PARTIAL, NULL, NULL);
+		WSASend(s, &buffer, 1, &bytesSent, 0, NULL, NULL);
 		if (bytesSent == 0) {
 			std::cerr << "Error sending file: " << WSAGetLastError() << std::endl;
 			ZeroMemory(buffer.buf, BUFFER_SIZE);
@@ -185,68 +186,34 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
  * Execute a program with the session and the request
  */
 inline bool executeAndDump(std::string dll, Session* session, char* request) {
-	if (!dll.compare("")) {
-		return false;
-	}
-	FILE* fp;
 	unsigned long bytesSent = 0;
 
 	crver::HTTPRequest req = crver::InitRequest(request, Sessions.size());
-	WSABUF (*func)(crver::HTTPRequest*) = (WSABUF (*)(crver::HTTPRequest*))webMains[dll];
-	WSABUF buffer = func(&req);
+	WSABUF buffer = reinterpret_cast<WSABUF(*)(crver::HTTPRequest*)>(webMains[dll])(&req);
 
-	WSASend(session->NEW_CONNECTION.http.Connection, &buffer, 1, &bytesSent, MSG_DONTROUTE | MSG_PARTIAL, NULL, NULL);
+	WSASend(session->NEW_CONNECTION.http.Connection, &buffer, 1, &bytesSent, 0, NULL, NULL);
 	if (bytesSent == 0) {
 		std::cerr << "Error sending file: " << WSAGetLastError() << std::endl;
-		ZeroMemory(buffer.buf, BUFFER_SIZE);
 		return false;
 	}
-	ZeroMemory(buffer.buf, buffer.len);
 
 	return true;
 }
 
 void connectionListener(HTTP_Server* s) {
-	std::cout << "Listening for incoming connections...\n";
+	printf("Listening for incoming connections...\n");
 
-	while (1 && !s->should_stop) {
-		if (listen(s->ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
-			printf("Listen failed with error: %ld\n", WSAGetLastError());
-			closesocket(s->ListenSocket);
-			s->terminate();
-			break;
-		}
-
+	while (!s->should_stop) {
 		Session* newClient = new Session(INVALID_SOCKET);
-		#if defined(_WIN64) || defined(_WIN32)
-			newClient->NEW_CONNECTION.http.Connection = WSAAccept(s->ListenSocket, &newClient->NEW_CONNECTION.http.Destination, &newClient->NEW_CONNECTION.http.Dest_len, nullptr, (DWORD_PTR) nullptr);
-		#else
-			newClient->NEW_CONNECTION.http.Connection = accept(s->ListenSocket, &newClient->NEW_CONNECTION.http.Destination, &newClient->NEW_CONNECTION.http.Dest_len);
-		#endif
+		newClient->NEW_CONNECTION.http.Connection = WSAAccept(s->ListenSocket, &newClient->NEW_CONNECTION.http.Destination, &newClient->NEW_CONNECTION.http.Dest_len, nullptr, (DWORD_PTR) nullptr);
 		if (newClient->NEW_CONNECTION.http.Connection == INVALID_SOCKET) {
 			printf("accept failed: %d\n", WSAGetLastError());
 			closesocket(s->ListenSocket);
 			s->terminate();
-			break;
 		}
-		else {
-			#if defined(_WIN64) || defined(_WIN32)
-				int optval = 1;
-				setsockopt(newClient->NEW_CONNECTION.http.Connection, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
-				setsockopt(newClient->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, sizeof(optval));
-				setsockopt(newClient->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
-				struct tcp_keepalive ka;
-				ka.onoff = 1;
-				ka.keepalivetime = 30000;  // Time before sending first keep-alive probe (30s)
-				ka.keepaliveinterval = KEEPALIVE_INTERVAL_MS; // Interval between probes (10s)
-
-				DWORD dwBytesReturned;
-				WSAIoctl(newClient->NEW_CONNECTION.http.Connection, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &dwBytesReturned, nullptr, nullptr);
-			#endif
-			newClient->active = true;
-			std::thread t = std::thread(listener, s, newClient);
-			t.detach();
-		}
+		newClient->active = true;
+		std::thread t = std::thread(listener, s, newClient);
+		t.detach();
 	}
 	return;
 }
@@ -255,6 +222,28 @@ int listener(HTTP_Server* s, Session* CurrentSession) {
 	int status = 1;
 	size_t clientNumber = 0;
 	WSABUF buffer = { BUFFER_SIZE, new char[BUFFER_SIZE] };
+
+#if defined(_WIN64) || defined(_WIN32)
+	int optval = 1;
+	setsockopt(CurrentSession->NEW_CONNECTION.http.Connection, IPPROTO_TCP, TCP_NODELAY, (char*)&optval, sizeof(optval));
+	setsockopt(CurrentSession->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_KEEPALIVE, (char*)&optval, sizeof(optval));
+	setsockopt(CurrentSession->NEW_CONNECTION.http.Connection, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
+
+	int cur = 0; int curlen = sizeof(cur);
+	if (getsockopt(CurrentSession->NEW_CONNECTION.http.Connection, IPPROTO_TCP, TCP_NODELAY, (char*)&cur, &curlen) == 0) {
+		if (cur != 1) {
+			printf("WARN: TCP_NODELAY not set on accepted socket!\n");
+		}
+	}
+
+	struct tcp_keepalive ka;
+	ka.onoff = 1;
+	ka.keepalivetime = 30000;
+	ka.keepaliveinterval = KEEPALIVE_INTERVAL_MS;
+	DWORD dwBytesReturned;
+	WSAIoctl(CurrentSession->NEW_CONNECTION.http.Connection, SIO_KEEPALIVE_VALS,
+		&ka, sizeof(ka), nullptr, 0, &dwBytesReturned, nullptr, nullptr);
+#endif
 
 	while (status > 0 && !s->should_stop) {
 		ZeroMemory(buffer.buf, BUFFER_SIZE);
@@ -275,29 +264,26 @@ int listener(HTTP_Server* s, Session* CurrentSession) {
 		// 404 ?
 		if (urls.find(page) != urls.end())
 		{
-			file = s->dir + "." + urls[page];
-			if (!endpoints[page].compare("executable")) {
-				bool sent = executeAndDump(urls[page], CurrentSession, buffer.buf);
-			} else if (!endpoints[page].compare("throw")) {
-				bool sent = readFile(file.string(), *CurrentSession, false);
-				if (!sent) {
-					std::cerr << "Error sending file: " << file.string() << std::endl;
-					break;
-				}
-			} else {
-				bool sent = readFile(file.string(), *CurrentSession, true);
-				if (!sent) {
-					std::cerr << "Error sending file: " << file.string() << std::endl;
-					break;
-				}
-				
+			bool sent = false;
+			endpoint_type& endpoint = endpoints[page];
+			std::string& url = urls[page];
+			file = s->dir + "." + url;
+			
+			if (endpoint == endpoint_type::EXECUTABLE)
+				sent = executeAndDump(url, CurrentSession, buffer.buf);
+			else
+				sent = readFile(file.string(), *CurrentSession, endpoint == endpoint_type::UPLOAD);
+
+			if (!sent) {
+				std::cerr << "Error sending file: " << file.string() << std::endl;
+				break;
 			}
 		} else {
 			std::string s = "";
-
-			if (!endpoints[page].compare("executable") ||
-				!file.extension().string().compare(".html")) {
-				s = (char*)(std::string("HTTP/1.1 404 Not Found\nDate : ") + timeToString(date) +
+			file = page;
+			if (endpoints[page] == endpoint_type::EXECUTABLE ||
+				!file.extension().string().compare(".html"))
+				s = "HTTP/1.1 404 Not Found\nDate : " + timeToString(date) +
 					"\nHTTP_Server: c_rver / 2.0.0 (Windows)\n"
 					"Connection: keep-alive\n"
 					"Referrer-Policy: strict-origin-when-cross-origin\r\n"
@@ -306,9 +292,8 @@ int listener(HTTP_Server* s, Session* CurrentSession) {
 					"X-Content-Type-Options: nosniff\r\n\r\n"
 					"<html><head><title>404 Not Found</title></head><body><center>"
 					"<h1>404 Not Found</h1></center><hr><center>c_rver/1.0.0 (Windows)"
-					"</center></body></html>\r\n").c_str();
-			}
-			else {
+					"</center></body></html>\r\n\r\n";
+			else
 				s = "HTTP/1.1 404 Not Found\nDate : " + timeToString(date) +
 					"\nHTTP_Server: c_rver / 2.0.0 (Windows)\n"
 					"Connection: keep-alive\n"
@@ -316,13 +301,13 @@ int listener(HTTP_Server* s, Session* CurrentSession) {
 					"Content-Type: text/html\n"
 					"Content-Length: 0\n"
 					"X-Content-Type-Options: nosniff\r\n\r\n";
-			}
 
 			WSABUF toSendBuffer = { (ULONG)s.length(), s.data() };
 			unsigned long bytesSent = 0;
 			WSASend(CurrentSession->NEW_CONNECTION.http.Connection, &toSendBuffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
-			if (bytesSent == 0) {
-				std::cerr << "Error sending header: " << WSAGetLastError() << std::endl;
+			int error = WSAGetLastError();
+			if (bytesSent == 0 && error != 10053) {
+				std::cerr << "Error sending header: " << error << std::endl;
 				ZeroMemory(buffer.buf, buffer.len);
 				break;
 			}
@@ -399,6 +384,12 @@ bool HTTP_Server::start(void) {
 
 	freeaddrinfo(result);
 #endif
+
+	if (listen(this->ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
+		closesocket(this->ListenSocket);
+		terminate();
+		return 1;
+	}
 
 	connectionListener(this);
 

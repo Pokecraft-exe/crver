@@ -43,6 +43,7 @@ typedef struct {
 #define WSAGetLastError() errno
 #define ZeroMemory(x, y) memset(x, 0, y)
 #define CopyMemory(x, y, z) memcpy(x, y, z)
+#define WSAaccept(a, b, c, d, e) accept(a, b, c)
 
 #endif
 

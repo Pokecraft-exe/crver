@@ -1,5 +1,5 @@
 #pragma once
-#ifdef __linux__
+#if defined(__inux__) 
 typedef unsigned long long int SOCKET;
 #endif
 
@@ -14,6 +14,13 @@ typedef unsigned long long int SOCKET;
 
 #include <map>
 #include <msquic/msquic.h>
+
+enum class endpoint_type {
+    NONE = 0,
+    THROW,
+    UPLOAD,
+    EXECUTABLE,
+};
 
 extern std::vector<std::map<std::string, std::string>> Sessions;
 

@@ -5,7 +5,6 @@
 #include <cctype>
 #include <functional>
 #include <queue>
-#include "ipm.hpp"
 #include "Socket.hpp"
 #include "sites-includes/crver.hpp"
 
@@ -110,7 +109,7 @@ inline std::string& trim(std::string& s, const char* t = ws)
 
 // definition of maps for all necessary
 std::map<std::string, std::string> urls;
-std::map<std::string, std::string> endpoints;
+std::map<std::string, endpoint_type> endpoints;
 std::map<std::string, std::string> extentions;
 std::map<std::string, std::string> cache;
 std::map<std::string, void*> webMains;
@@ -228,11 +227,12 @@ int main(int argc, char** argv) {
 					return 1;
 				}
 			}
-			std::string method = i.value()["treat"].get<std::string>();
+			std::string sMethod = i.value()["treat"].get<std::string>();
+			endpoint_type method = i.value()["treat"].get<std::string>().compare("throw") == 0 ? endpoint_type::THROW : endpoint_type::UPLOAD;
 
 			urls[key] = path;
-			endpoints[key] = (isExecutable && method == "throw") ? "executable" : method;
-			std::cout << "url: " << key << " path: " << path << " treat: " << method << std::endl;
+			endpoints[key] = (isExecutable && method == endpoint_type::THROW) ? endpoint_type::EXECUTABLE : method;
+			std::cout << "url: " << key << " path: " << path << " treat: " << sMethod << std::endl;
         }
 
 		for (const auto& i : j["extentions"].items()) {
