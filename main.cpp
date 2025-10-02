@@ -6,7 +6,6 @@
 #include <functional>
 #include <queue>
 #include "Socket.hpp"
-#include "sites-includes/crver.hpp"
 
 extern int affinity(int IN cpu);
 

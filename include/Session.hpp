@@ -22,7 +22,26 @@ enum class endpoint_type {
     EXECUTABLE,
 };
 
-extern std::vector<std::map<std::string, std::string>> Sessions;
+enum HTTPMethod {
+    none = 0,
+    HTTP_GET,
+    HTTP_POST,
+    HTTP_PUT,
+    HTTP_DELETE,
+    HTTP_HEAD,
+    HTTP_PATCH,
+    HTTP_OPTIONS
+};
+
+struct HTTPRequest {
+    HTTPMethod method;
+    std::string endpoint = "";
+    std::string url = "";
+    std::map<std::string, std::string> SESSION = {};
+    std::map<std::string, std::string> GET = {};
+    std::map<std::string, std::string> POST = {};
+    std::map<std::string, std::string> COOKIES = {};
+};
 
 class alignas(8) Session {
 public:
@@ -44,3 +63,21 @@ public:
     Session(const Session& sess);
     operator SOCKET();
 };
+
+class Worker {
+private:
+    Session* CurrentSession = nullptr;
+public:
+    bool active = false;
+    bool should_stop = false;
+    bool waiting = false;
+    void* s;
+    std::thread thread;
+
+    Worker();
+
+    void handle(Session* session);
+    bool work();
+};
+
+extern Worker Workers[100];

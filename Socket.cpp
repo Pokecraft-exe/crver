@@ -12,7 +12,6 @@
 
 #include "Socket.hpp"
 #include "compress.hpp"
-#include "sites-includes/crver.hpp"
 
 constexpr size_t BUFFER_SIZE = 0x1000;
 constexpr DWORD KEEPALIVE_INTERVAL_MS = 10000;  // 10 seconds
@@ -49,6 +48,8 @@ extern std::map<std::string, void*> webMains;
 std::vector<Session> sessions = {};
 std::ofstream logFile;
 std::mutex logMutex;
+int sessionsNum = 0;
+std::queue<Session*> SocketQueue;
 
 inline void log(std::string msg) {
 	while (logMutex.try_lock()) {
@@ -74,7 +75,7 @@ inline void getPage(std::string& page, const WSABUF& buffer) {
 	int end = 0;
 	int start = 0;
 	for (end; end < buffer.len; end++) {
-		if (buffer.buf[end] == ' ' &&
+		if (buffer.buf[end] == ' '     &&
 			buffer.buf[end + 1] == 'H' &&
 			buffer.buf[end + 2] == 'T' &&
 			buffer.buf[end + 3] == 'T' &&
@@ -188,8 +189,8 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 inline bool executeAndDump(std::string dll, Session* session, char* request) {
 	unsigned long bytesSent = 0;
 
-	crver::HTTPRequest req = crver::InitRequest(request, Sessions.size());
-	WSABUF buffer = reinterpret_cast<WSABUF(*)(crver::HTTPRequest*)>(webMains[dll])(&req);
+	HTTPRequest req = InitRequest(request, sessionsNum);
+	WSABUF buffer = reinterpret_cast<WSABUF(*)(HTTPRequest*)>(webMains[dll])(&req);
 
 	WSASend(session->NEW_CONNECTION.http.Connection, &buffer, 1, &bytesSent, 0, NULL, NULL);
 	if (bytesSent == 0) {
@@ -198,6 +199,176 @@ inline bool executeAndDump(std::string dll, Session* session, char* request) {
 	}
 
 	return true;
+}
+
+// Encode string into application/x-www-form-urlencoded
+std::string url_encode(const std::string& value) {
+	std::ostringstream encoded;
+	for (unsigned char c : value) {
+		if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+			encoded << c;
+		}
+		else if (c == ' ') {
+			encoded << '+';
+		}
+		else {
+			encoded << '%' << std::uppercase << std::hex
+				<< std::setw(2) << std::setfill('0') << int(c);
+		}
+	}
+	return encoded.str();
+}
+
+// Decode application/x-www-form-urlencoded string
+std::string url_decode(const std::string& value) {
+	std::ostringstream decoded;
+	for (size_t i = 0; i < value.size(); ++i) {
+		char c = value[i];
+		if (c == '+') {
+			decoded << ' ';
+		}
+		else if (c == '%' && i + 2 < value.size() &&
+			std::isxdigit(value[i + 1]) && std::isxdigit(value[i + 2])) {
+			std::string hex = value.substr(i + 1, 2);
+			char decoded_char = static_cast<char>(std::stoi(hex, nullptr, 16));
+			decoded << decoded_char;
+			i += 2;
+		}
+		else {
+			decoded << c;
+		}
+	}
+	return decoded.str();
+}
+
+HTTPRequest InitRequest(std::string data, int maxsession) {
+	HTTPRequest req = { none, "", {}, {} };
+	std::stringstream request(data);
+	std::string get("");
+	int pos;
+	if (data[0] == 'G' || request.str().find("?") != std::string::npos) {
+		req.method = HTTP_GET;
+		req.GET = std::map<std::string, std::string >();
+		req.endpoint = "";
+		request >> get >> get;
+
+		// replace & and = to space so >> operator works
+		while ((pos = get.rfind('&')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+		while ((pos = get.rfind('=')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+		if ((pos = get.rfind('?')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+
+		// retrive the actual endpoint
+		request = std::stringstream(get);
+		request >> req.endpoint;
+		req.endpoint = req.endpoint.substr(0, req.endpoint.find('?'));
+
+		// retrive the actual get map
+		while (!request.eof()) {
+			std::string one;
+			std::string two;
+
+			request >> one;
+			request >> two;
+
+			req.GET.insert({ one, two });
+		}
+	}
+	else if (data[0] == 'P' && data[1] == 'O') {
+		req.method = HTTP_POST;
+		req.POST = std::map<std::string, std::string >();
+		req.endpoint = "";
+		request >> get >> get;
+
+		// replace & and = to space to >> operator works
+		while ((pos = get.rfind('&')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+		while ((pos = get.rfind('=')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+		if ((pos = get.rfind('?')) != std::string::npos) {
+			get.erase(pos, 1);
+			get.insert(pos, " ");
+		}
+
+		// retrive the actual endpoint
+		request = std::stringstream(get);
+		request >> req.endpoint;
+		req.endpoint = req.endpoint.substr(0, req.endpoint.find('?'));
+	}
+	// retrive all cookies
+	request = std::stringstream(data);
+	while (std::getline(request, get)) {
+		if (get.substr(0, 7).compare("Cookies") == 0) {
+			std::stringstream cookies(get.substr(8, get.length() - 8));
+			while (std::getline(cookies, get, ';')) {
+				std::string key = get.substr(0, get.find('='));
+				std::string value = get.substr(get.find('=') + 1, get.length() - (get.find('=') + 1));
+				req.COOKIES.insert({ url_decode(key), url_decode(value) });
+			}
+		}
+	}
+
+	req.SESSION = std::map<std::string, std::string >();
+	if (req.COOKIES.find("SESSIONID") == req.COOKIES.end())
+		req.COOKIES.insert({ "SESSIONID", std::to_string(maxsession) });
+
+	// load session data from shared memory
+#if defined(_WIN64) || defined(_WIN32)
+	std::wstring fileName = L"IPM_SESSION_" + std::wstring(req.COOKIES["SESSIONID"].begin(), req.COOKIES["SESSIONID"].end());
+	size_t fileSize = 0x1000;
+	HANDLE hMapFile = CreateFileMappingW(
+		INVALID_HANDLE_VALUE,
+		NULL,
+		PAGE_READWRITE,
+		0,
+		fileSize,
+		fileName.c_str());
+
+	char* buffer = reinterpret_cast<char*>(MapViewOfFile(hMapFile,
+		FILE_MAP_ALL_ACCESS,
+		0,
+		0,
+		fileSize));
+#else
+#if defined(__linux__)
+	std::string fileName = "/IPM_SESSION_" + req.COOKIES["SESSIONID"];
+	size_t fileSize = 0x1000;
+	int fd = shm_open(fileName.c_str(), O_RDONLY, 0666);
+	char* buffer = reinterpret_cast<char*>(mmap(NULL, fileSize,
+		PROT_READ, MAP_SHARED, fd, 0));
+#endif
+#endif
+	std::stringstream ss(buffer);
+	// session data is stored as key=value\nkey2=value2\n
+	while (std::getline(ss, get)) {
+		std::string key = get.substr(0, get.find('='));
+		std::string value = get.substr(get.find('=') + 1, get.length() - (get.find('=') + 1));
+		req.SESSION.insert({ url_decode(key), url_decode(value) });
+	}
+
+	// close handles
+#if defined(_WIN64) || defined(_WIN32)
+	UnmapViewOfFile(buffer);
+	CloseHandle(hMapFile);
+#else
+#if defined(__linux__)
+	munmap(buffer, fileSize);
+	close(fd);
+#endif
+#endif
+	return req;
 }
 
 void connectionListener(HTTP_Server* s) {
@@ -212,8 +383,7 @@ void connectionListener(HTTP_Server* s) {
 			s->terminate();
 		}
 		newClient->active = true;
-		std::thread t = std::thread(listener, s, newClient);
-		t.detach();
+		SocketQueue.push(newClient);
 	}
 	return;
 }
@@ -383,6 +553,13 @@ bool HTTP_Server::start(void) {
 	hints.ai_addrlen = result->ai_addrlen;
 
 	freeaddrinfo(result);
+
+	for (int i = 0; i < 100; i++) {
+		Workers[i] = Worker();
+		Workers[i].s = this;
+	}
+
+	printf("%d Workers ready.\n", sizeof(Workers) / sizeof(Workers[0]));
 #endif
 
 	if (listen(this->ListenSocket, SOMAXCONN) == SOCKET_ERROR) {

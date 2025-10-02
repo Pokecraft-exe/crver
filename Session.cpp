@@ -2,9 +2,39 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <thread>
 #include "Session.hpp"
+#include "Socket.hpp"
 
-std::vector<std::map<std::string, std::string>> Sessions = {};
+Worker::Worker() : active(false), should_stop(false), waiting(true), s(nullptr), thread(&Worker::work, this) {
+	thread.detach();
+}
+
+void Worker::handle(Session* session) {
+    this->CurrentSession = session;
+    this->waiting = false;
+    return;
+}
+
+bool Worker::work() {
+	active = true;
+    while (!should_stop) {
+        if (!waiting) {
+			listener(reinterpret_cast<HTTP_Server*>(s), CurrentSession);
+            waiting = true;
+        }
+        if (SocketQueue.size() > 0) {
+            Session* sess = SocketQueue.back();
+            SocketQueue.pop();
+            handle(sess);
+        } else {
+            waiting = true;
+		}
+	}
+	return true;
+}
+
+Worker Workers[100];
 
 Session::Session(SOCKET socket) : active(false), buf(nullptr) {
     // Initialize the http_connection part of the union

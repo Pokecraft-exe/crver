@@ -15,8 +15,8 @@
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <queue>
 #include "Session.hpp"
-#include "sites-includes/crver.hpp"
 
 #define NUM_CLIENTS() sessions.size()
 
@@ -47,6 +47,9 @@ typedef struct {
 
 #endif
 
+extern std::queue<Session*> SocketQueue;
+extern int sessionsNum;
+
 class alignas(8) HTTP_Server {
 public:
 	SOCKET ListenSocket;
@@ -64,4 +67,5 @@ public:
 };
 
 int listener(HTTP_Server* s, Session* newClient);
+HTTPRequest InitRequest(std::string data, int maxsession);
 void connectionListener(HTTP_Server* s);
