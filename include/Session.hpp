@@ -63,21 +63,3 @@ public:
     Session(const Session& sess);
     operator SOCKET();
 };
-
-class Worker {
-private:
-    Session* CurrentSession = nullptr;
-public:
-    bool active = false;
-    bool should_stop = false;
-    bool waiting = false;
-    void* s;
-    std::thread thread;
-
-    Worker();
-
-    void handle(Session* session);
-    bool work();
-};
-
-extern Worker Workers[100];

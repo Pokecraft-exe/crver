@@ -17,6 +17,7 @@
 #include <mutex>
 #include <queue>
 #include "Session.hpp"
+#include "Worker.hpp"
 
 #define NUM_CLIENTS() sessions.size()
 
@@ -66,6 +67,6 @@ public:
 	void terminate();
 };
 
-int listener(HTTP_Server* s, Session* newClient);
+int listener(HTTP_Server* s, Session* newClient, Worker* w);
 HTTPRequest InitRequest(std::string data, int maxsession);
 void connectionListener(HTTP_Server* s);

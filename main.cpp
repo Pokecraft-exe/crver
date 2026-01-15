@@ -112,7 +112,6 @@ std::map<std::string, endpoint_type> endpoints;
 std::map<std::string, std::string> extentions;
 std::map<std::string, std::string> cache;
 std::map<std::string, void*> webMains;
-std::map<std::string, std::queue<std::thread::id>> queues;
 
 #if defined(__linux__)
 extern "C" {
@@ -137,7 +136,7 @@ int main(int argc, char** argv) {
 
 #if defined(_WIN64) || defined(_WIN32) // Set the console control handler
 	if (!SetConsoleCtrlHandler(ConsoleEventHandler, TRUE)) {
-		std::cerr << "Error: Could not set control handler.\n";
+		printf("Error: Could not set control handler.\n");
 		return 1;
 	}
 #endif
@@ -152,7 +151,7 @@ int main(int argc, char** argv) {
 		std::string dir = j.tryGetJson<std::string>("directory");
 		std::string temp = j.tryGetJson<std::string>("temporary");
 		std::string key = j.tryGetJson<std::string>("key");
-       		std::string cert = j.tryGetJson<std::string>("cert");
+       	std::string cert = j.tryGetJson<std::string>("cert");
 
 		trim(port);
 		s->port = port;
@@ -163,12 +162,12 @@ int main(int argc, char** argv) {
 
 		// verify port is an integer
 		if (!std::all_of(port.begin(), port.end(), ::isdigit) || port.empty()) {
-			std::cerr << "Error: Port must be a valid number" << std::endl;
+			printf("Error: Port must be a valid number\n");
 			return 1;
 		}
 
-		std::cout << "Certificate file: " << s->cert << '\n';
-		std::cout << "Key file: " << s->key << '\n';
+		printf("Certificate file: %s\n", s->cert.c_str());
+		printf("Key file: %s\n", s->key.c_str());
 
         for (const auto& i : j["urls"].items()) { // Add reference (&) to avoid copying each item
 			std::string key = i.key();
@@ -191,13 +190,13 @@ int main(int argc, char** argv) {
 
 				HMODULE hDll = LoadLibrary(wpath.c_str());
 				if (hDll == NULL) {
-					std::cerr << "Could not load DLL: " << path << " Error: " << GetLastError() << std::endl;
+					printf("Could not load DLL: %s Error: %d\n", path.c_str(), GetLastError());
 					return 1;
 				}
 
 				webMains[path] = GetProcAddress(hDll, "WebMain");
 				if (webMains[path] == NULL) {
-					std::cerr << "Could not load process (WebMain): " << path << " Error: " << GetLastError() << std::endl;
+					printf("Could not load process (WebMain): %s Error: %d\n", path.c_str(), GetLastError());
 					return 1;
 				}
 #else
@@ -213,7 +212,6 @@ int main(int argc, char** argv) {
 				}
 #endif
 #endif
-				std::cout << "Loaded DLL: " << path << std::endl;
 			}
 			catch (std::exception e) {
 				try {
@@ -222,7 +220,7 @@ int main(int argc, char** argv) {
 					if (path.compare(".") == 0) path = key;
 				}
 				catch (std::exception ee) {
-					std::cerr << "JSON is invalid, can't find `path' or `dll' at `" << key << "'" << std::endl;
+					printf("JSON is invalid, can't find `path' or `dll' at `%s'", key.c_str());
 					return 1;
 				}
 			}
@@ -231,19 +229,20 @@ int main(int argc, char** argv) {
 
 			urls[key] = path;
 			endpoints[key] = (isExecutable && method == endpoint_type::THROW) ? endpoint_type::EXECUTABLE : method;
-			std::cout << "url: " << key << " path: " << path << " treat: " << sMethod << std::endl;
+			printf("url: %s path: %s treat: %s\n", key.c_str(), path.c_str(), sMethod.c_str());
         }
 
 		for (const auto& i : j["extentions"].items()) {
 			std::string key = i.key();
 			std::string method = i.value().get<std::string>();
 			extentions[key] = method;
-			std::cout << "extention: " << key << " method: " << method << std::endl;
+			printf("extention: %s method: %s\n", key.c_str(), method.c_str());
 		}
 
 		file.close();
 
-		std::cout << "configuration loaded\nport: " << s->port << "\ndirectory: " << s->dir << "\ntemporary directory (ramdisk preferred): " << s->temp << std::endl;
+		printf("configuration loaded\nport: %s\ndirectory: %s\ntemporary directory (ramdisk preferred): %s\n",
+			s->port.c_str(), s->dir.c_str(), s->temp.c_str());
 
 	}
 	else {
@@ -257,6 +256,8 @@ int main(int argc, char** argv) {
 		#endif
 		std::cout << "configuration default\nport: 80\ndirectory: " << s->dir << "\ntemporary directory (ramdisk preferred): " << s->temp << std::endl;
 	}
+	
+	Workers = new Worker();
 
 	if (!s->start()) {
 		s->terminate();

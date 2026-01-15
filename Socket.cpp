@@ -11,6 +11,7 @@
 #endif
 
 #include "Socket.hpp"
+#include "Worker.hpp"
 #include "compress.hpp"
 
 constexpr size_t BUFFER_SIZE = 0x1000;
@@ -68,12 +69,12 @@ inline std::string timeToString(const std::tm* timeObj) {
 	return oss.str();
 }
 
-inline void getPage(std::string& page, const WSABUF& buffer) {
-	if (!strcmp(buffer.buf, "")) return;
+inline bool getPage(std::string& page, const WSABUF& buffer) {
+	if (!strcmp(buffer.buf, "")) return false;
 
 	// cstyle cuz need to b fast
-	int end = 0;
-	int start = 0;
+	unsigned long long int end = 0;
+	unsigned long long int start = 0;
 	for (end; end < buffer.len; end++) {
 		if (buffer.buf[end] == ' '     &&
 			buffer.buf[end + 1] == 'H' &&
@@ -92,9 +93,13 @@ inline void getPage(std::string& page, const WSABUF& buffer) {
 
 	start++;
 
-	page.resize(end - start);
+	if (start < end)
+		page.resize(end - start);
+	else
+		return false;
 
 	for (int i = start; i <= end; i++) page[i - start] = buffer.buf[i];
+	return true;
 }
 
 /*
@@ -184,9 +189,12 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 }
 
 /*
- * Execute a program with the session and the request
+ Execute a dll and send the response.
+  std::string dll    Name of the dll to execute (must be in the urls map)
+  Session& session   Session to send the response to
+  char* request      Buffer containing the HTTP request
  */
-inline bool executeAndDump(std::string dll, Session* session, char* request) {
+inline bool executeAndDump(std::string& dll, Session* session, char* request) {
 	unsigned long bytesSent = 0;
 
 	HTTPRequest req = InitRequest(request, sessionsNum);
@@ -194,14 +202,16 @@ inline bool executeAndDump(std::string dll, Session* session, char* request) {
 
 	WSASend(session->NEW_CONNECTION.http.Connection, &buffer, 1, &bytesSent, 0, NULL, NULL);
 	if (bytesSent == 0) {
-		std::cerr << "Error sending file: " << WSAGetLastError() << std::endl;
+		std::cerr << "Error sending buffer: " << WSAGetLastError() << std::endl;
 		return false;
 	}
 
 	return true;
 }
 
-// Encode string into application/x-www-form-urlencoded
+/*
+ Encode string into application / x - www - form - urlencoded
+ */
 std::string url_encode(const std::string& value) {
 	std::ostringstream encoded;
 	for (unsigned char c : value) {
@@ -388,7 +398,7 @@ void connectionListener(HTTP_Server* s) {
 	return;
 }
 
-int listener(HTTP_Server* s, Session* CurrentSession) {
+int listener(HTTP_Server* s, Session* CurrentSession, Worker* w) {
 	int status = 1;
 	size_t clientNumber = 0;
 	WSABUF buffer = { BUFFER_SIZE, new char[BUFFER_SIZE] };
@@ -425,7 +435,17 @@ int listener(HTTP_Server* s, Session* CurrentSession) {
 		std::tm* date = gmtime(&t_date);
 		std::string page;
 
-		getPage(page, buffer);
+		// append the buffer to "/buffer.buf" file with a separator of ---------------
+		std::ofstream os("/buffer.buf", std::ios::app);
+		os << buffer.buf << "\n---------------\n";
+
+		bool pageGot = getPage(page, buffer);
+
+		if (!pageGot) {
+			WSAAddressToStringA(&CurrentSession->NEW_CONNECTION.http.Destination, CurrentSession->NEW_CONNECTION.http.Dest_len, NULL, buffer.buf, (LPDWORD)&buffer.len);
+			log("[" + std::string(buffer.buf) + "] [Error] Couldn't retrieve page from request.");
+			break;
+		}
 
 		std::filesystem::path file;
 
@@ -554,12 +574,16 @@ bool HTTP_Server::start(void) {
 
 	freeaddrinfo(result);
 
+	Worker* CurrentWorker = Workers;
+
 	for (int i = 0; i < 100; i++) {
-		Workers[i] = Worker();
-		Workers[i].s = this;
+		CurrentWorker->initialize(this);
+		CurrentWorker->createNewWorker();
+		CurrentWorker = CurrentWorker->getNextWorker();
+		WorkersCount++;
 	}
 
-	printf("%d Workers ready.\n", sizeof(Workers) / sizeof(Workers[0]));
+	printf("%d Workers ready.\n", WorkersCount);
 #endif
 
 	if (listen(this->ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
@@ -613,6 +637,3 @@ void HTTP_Server::terminate(void) {
 	logFile.close();
 	return;
 }
-
-//1.	Use thread pools instead of creating new threads for each connection
-//2.	Add RAII for socket management and proper exception handling

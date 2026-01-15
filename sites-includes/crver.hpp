@@ -320,7 +320,7 @@ namespace crver {
 		tm date = {};
 		gmtime_s(&date, &t_date);
 
-		response << "HTTP/3 " << status_code << " " << status_code_str[status_code] << "\n"
+		response << "HTTP/" VER " " << status_code << " " << status_code_str[status_code] << "\n"
 			"Date : " << std::put_time(&date, (char*)"%a, %d %b %Y %T %Z") <<	
 			"\nServer: " VERSION "\n"
 			"Content-Type: " << content_type << "\n"
