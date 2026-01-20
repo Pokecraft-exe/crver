@@ -18,6 +18,7 @@ extern int affinity(int IN cpu);
 
 #else
 
+#include <dlfcn.h>
 #define _popen(x, y) popen(x, y)
 #define DEFAULT_CONFFILE "/etc/crver/config.cfg"
 
@@ -25,47 +26,19 @@ extern int affinity(int IN cpu);
 
 /*
 * TODO:
+* limit first packet to 14KB
 * add all verbs
 * add all encodings
 * add http version not supported (1.1 and 3.0 only)
 * add logging
 * add http redirect
+* 
+* create a daemon/service for linux and windows
 */
 
 const QUIC_API_TABLE* MsQuic;
 HTTP_Server* s = nullptr;
 const char* ws = " \t\n\r\f\v";
-
-#if defined(_WIN64) || defined(_WIN32)
-
-/**
- * Remap the console events to perform a cleanup
- */
-BOOL WINAPI ConsoleEventHandler(DWORD event) {
-	switch (event) {
-	case CTRL_C_EVENT:
-		s->terminate();
-		std::cout << "Ctrl+C pressed. Cleaning up...\n";
-		return TRUE; // Prevent default behavior
-	case CTRL_CLOSE_EVENT:
-		s->terminate();
-		std::cout << "Console is closing. Performing cleanup...\n";
-		return TRUE; // Prevent default behavior
-	case CTRL_BREAK_EVENT:
-		s->terminate();
-		std::cout << "Ctrl+Break pressed. Handling...\n";
-		return TRUE;
-	case CTRL_LOGOFF_EVENT:
-	case CTRL_SHUTDOWN_EVENT:
-		s->terminate();
-		std::cout << "System is logging off or shutting down. Handling...\n";
-		return TRUE;
-	default:
-		return FALSE; // Let the system handle other events
-	}
-}
-
-#endif
 
 class pjson : public nlohmann::json {
 public:
@@ -203,7 +176,7 @@ int main(int argc, char** argv) {
 #if defined(__linux__)
 				void* handle = dlopen((s->dir + path).c_str(), RTLD_LAZY);
 				dlerror();
-				webMains[path] = (WebMainFunc)dlsym(handle, "WebMain");
+				webMains[path] = dlsym(handle, "WebMain");
 				const char* dlsym_error = dlerror();
 				if (dlsym_error) {
 					std::cerr << "Could not load symbol 'WebMain' from " << path << " Error: " << dlsym_error << std::endl;

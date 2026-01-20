@@ -392,6 +392,7 @@ void connectionListener(HTTP_Server* s) {
 			closesocket(s->ListenSocket);
 			s->terminate();
 		}
+		log("New session accepted with HTTP_ID: " + std::to_string(newClient->NEW_CONNECTION.http.Connection));
 		newClient->active = true;
 		SocketQueue.push(newClient);
 	}
@@ -442,10 +443,18 @@ int listener(HTTP_Server* s, Session* CurrentSession, Worker* w) {
 		bool pageGot = getPage(page, buffer);
 
 		if (!pageGot) {
+#if defined(_WIN64) || defined(_WIN32) 
 			WSAAddressToStringA(&CurrentSession->NEW_CONNECTION.http.Destination, CurrentSession->NEW_CONNECTION.http.Dest_len, NULL, buffer.buf, (LPDWORD)&buffer.len);
+#else
+			// Linux equivalent of WSAAddressToStringA
+			inet_ntop(AF_INET, &((struct sockaddr_in*)&CurrentSession->NEW_CONNECTION.http.Destination)->sin_addr, buffer.buf, buffer.len);
+#endif
 			log("[" + std::string(buffer.buf) + "] [Error] Couldn't retrieve page from request.");
 			break;
 		}
+
+		log("Session with HTTP ID: " + std::to_string(CurrentSession->NEW_CONNECTION.http.Connection));
+		log("[" + std::string(buffer.buf) + "] Requested page: " + page);
 
 		std::filesystem::path file;
 

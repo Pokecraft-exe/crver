@@ -14,8 +14,14 @@
 #include <cstdio>
 #define VERSION "c_rver API / 4.0.0 (Windows)"
 #define MakeEnvironnemnt(x) ::crver::HTTPENV x;::crver::makeHTTPENV(&x, argc, argv)
-#define STRINGIFY(x) R#x
-#define HTML(x) crver::out << STRINGIFY((x))
+
+#if defined(_MSC_VER)
+#define RAWIFY(x) R#x
+#define STRINGIFY(x) RAWIFY(ENDHTMLZONE(x)ENDHTMLZONE)
+#else
+#define STRINGIFY(x) R"ENDHTMLZONE(x)ENDHTMLZONE"
+#endif
+#define HTML(x) crver::out << STRINGIFY(x)
 
 #if defined (__linux__)
 #include <unistd.h>
@@ -25,6 +31,17 @@
 #include <cstring>
 #include <cerrno>
 #include <sys/types.h>
+
+typedef struct {
+	unsigned long len;
+	char* buf;
+} WSABUF;
+
+#define gmtime_s(x, y) gmtime_r(y, x)
+
+typedef unsigned long ULONG;
+typedef char CHAR;
+
 #else
 #if defined(_WIN32) || defined(_WIN64)
 #define _CRT_SECURE_NO_WARNINGS
@@ -86,6 +103,7 @@ namespace crver {
 		std::map<std::string, std::string> COOKIES = {};
 	};
 
+#if defined(_MSC_VER)
 	template <class _Elem, class _Traits>
 	std::basic_ostream<_Elem, _Traits>& __CLRCALL_OR_CDECL endl(
 		std::basic_ostream<_Elem, _Traits>& _Ostr) {
@@ -96,6 +114,19 @@ namespace crver {
 		_Ostr.put(_Ostr.widen('>'));
 		return _Ostr;
 	}
+
+#else
+	template<class CharT, class Traits>
+	std::basic_ostream<CharT, Traits>& endl(
+		std::basic_ostream<CharT, Traits>& os) {
+		os.put('<');
+		os.put('b');
+		os.put('r');
+		os.put('/');
+		os.put('>');
+		return os;
+	}
+#endif
 
 	std::stringstream out;
 	static std::string save = "";
@@ -213,14 +244,14 @@ namespace crver {
 		textJS
 	};
 
-	std::string header = "Connection: keep-alive\n"
-		"Referrer-Policy: strict-origin-when-cross-origin\n"
+	std::string header = "Connection: keep-alive\r\n"
+		"Referrer-Policy: strict-origin-when-cross-origin\r\n"
 		"X-Content-Type-Options: nosniff";
 
 	std::string head = "";
 
 	void addHeader(std::string newHeader) {
-		header += '\n' + newHeader;
+		header += "\r\n" + newHeader;
 		return;
 	}
 	void link(std::string rel, std::string type, std::string href) {
@@ -245,7 +276,7 @@ namespace crver {
 		std::stringstream response("");
 
 		for (auto& cookie : req->COOKIES) {
-			header += "\nSet-Cookie: " + url_encode(cookie.first) + "=" + url_encode(cookie.second) + "; HttpOnly; SameSite=Strict; Path=/; Secure";
+			header += "\r\nSet-Cookie: " + url_encode(cookie.first) + "=" + url_encode(cookie.second) + "; HttpOnly; SameSite=Strict; Path=/; Secure";
 		}
 		// write session data back to shared memory
 		if (req->COOKIES.find("SESSIONID") != req->COOKIES.end()) {
@@ -295,14 +326,14 @@ namespace crver {
 			CloseHandle(hMapFile);
 #else
 #if defined(__linux__)
-			std::string fileName = "/IPM_SESSION_" + req.COOKIES["SESSIONID"];
+			std::string fileName = "/IPM_SESSION_" + req->COOKIES["SESSIONID"];
 			size_t fileSize = 0x1000;
 			int fd = shm_open(fileName.c_str(), O_CREAT | O_RDWR, 0666);
 			char* buffer = reinterpret_cast<char*>(mmap(NULL, fileSize,
 				PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
 			std::stringstream ss;
 			// session data is stored as key=value\nkey2=value2\n
-			for (auto& cookie : req.SESSION) {
+			for (auto& cookie : req->SESSION) {
 				ss << url_encode(cookie.first) << '=' << url_encode(cookie.second) << '\n';
 			}
 			std::string sessionData = ss.str();
@@ -320,14 +351,13 @@ namespace crver {
 		tm date = {};
 		gmtime_s(&date, &t_date);
 
-		response << "HTTP/" VER " " << status_code << " " << status_code_str[status_code] << "\n"
-			"Date : " << std::put_time(&date, (char*)"%a, %d %b %Y %T %Z") <<	
-			"\nServer: " VERSION "\n"
-			"Content-Type: " << content_type << "\n"
-			"Content-Length:" << std::to_string(out.str().length() + 43 + head.length()) << '\n'
-			<< header << "\r\n\r\n\r\n" << "<!DOCTYPE html><html><head>" << head << "</head>" <<
+		response << "HTTP/" VER " " << status_code << " " << status_code_str[status_code] << "\r\n"
+			"Date : " << std::put_time(&date, (char*)"%a, %d %b %Y %T %Z") <<
+			"\r\nServer: " VERSION "\r\n"
+			"Content-Type: " << content_type << "\r\n"
+			"Content-Length: " << std::to_string(out.str().length() + 41 + head.length()) << "\r\n"
+			<< header << "\r\n\r\n" << "<!DOCTYPE html><html><head>" << head << "</head>" <<
 			out.str() << "</html>\r\n";
-
 		out.str("");
 		out.clear();
 
@@ -335,7 +365,7 @@ namespace crver {
 
 		save = response.str();
 
-		WSABUF buffer = { static_cast<ULONG>(save.size()), const_cast<CHAR*>(save.data())};
+		WSABUF buffer = { static_cast<ULONG>(save.size()), const_cast<CHAR*>(save.data()) };
 
 		return buffer;
 	};
@@ -352,8 +382,8 @@ namespace crver {
 			<body>
 			<center>
 			<h1>404 Not Found</h1><br>
-			c_rver / 1.0.0 (Windows)
-			</center>
+			c_rver/1.0.0 (Windows)
+			</center >
 			</body>
 			</html>
 		);

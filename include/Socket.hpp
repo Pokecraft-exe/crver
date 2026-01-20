@@ -22,10 +22,12 @@
 #define NUM_CLIENTS() sessions.size()
 
 #if defined(__linux__)
+#include <sys/mman.h>
 
 typedef unsigned long DWORD;
 typedef unsigned long* LPDWORD;
 typedef void* DWORD_PTR;
+typedef unsigned long ULONG;
 
 typedef struct {
         unsigned long len;
@@ -40,11 +42,14 @@ typedef struct {
 #define TCP_NODELAY 1
 #define SOL_SOCKET 1
 
+#define IN
+#define OUT
+
 #define closesocket(x) close(x)
 #define WSAGetLastError() errno
 #define ZeroMemory(x, y) memset(x, 0, y)
 #define CopyMemory(x, y, z) memcpy(x, y, z)
-#define WSAaccept(a, b, c, d, e) accept(a, b, c)
+#define WSAAccept(a, b, c, d, e) accept(a, b, c)
 
 #endif
 

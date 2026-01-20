@@ -7,9 +7,9 @@
 #include "Session.hpp"
 #include "Socket.hpp"
 
+extern void log(std::string msg);
+
 void Worker::handle(Session* session) {
-    CurrentSession = session;
-    waiting = false;
     return;
 }
 
@@ -22,7 +22,10 @@ bool Worker::work(Worker* _this) {
         }
         if (SocketQueue.size() > 0) {
             Session* sess = SocketQueue.back();
-            _this->handle(sess);
+        	log("Worker handling new session with HTTP_ID: " + std::to_string(
+                sess->NEW_CONNECTION.http.Connection));
+            _this->CurrentSession = sess;
+            _this->waiting = false;
             SocketQueue.pop();
         }
         else {
