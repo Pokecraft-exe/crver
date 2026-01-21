@@ -14,7 +14,6 @@ public:
     bool  active = false;
     bool  should_stop = false;
 
-    void handle(Session* session);
     bool initialize(void* s);
     bool createNewWorker();
 	bool isWaiting() const { return waiting; }

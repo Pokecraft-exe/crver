@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
 				path = i.value()["dll"].get<std::string>();
 				isExecutable = true;
 
-				if (path.compare(".") == 0) key.substr(1, key.length() - 1);
+				if (path.compare(".") == 0) key = key.substr(1, key.length() - 1);
 
 #if defined(_WIN64) || defined(_WIN32)
 				std::wstring wpath = L"";
@@ -175,11 +175,13 @@ int main(int argc, char** argv) {
 #else
 #if defined(__linux__)
 				void* handle = dlopen((s->dir + path).c_str(), RTLD_LAZY);
-				dlerror();
+				if (!handle) {
+					std::cerr << "Could not load DLL: " << path << " Error: " << dlerror() << std::endl;
+					return 1;
+				}
 				webMains[path] = dlsym(handle, "WebMain");
-				const char* dlsym_error = dlerror();
-				if (dlsym_error) {
-					std::cerr << "Could not load symbol 'WebMain' from " << path << " Error: " << dlsym_error << std::endl;
+				if (!webMains[path]) {
+					std::cerr << "Could not load symbol 'WebMain' from " << path << " Error: " << dlerror() << std::endl;
 					dlclose(handle);
 					return 1;
 				}

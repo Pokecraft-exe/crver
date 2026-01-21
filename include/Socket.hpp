@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <condition_variable>
 #include <queue>
 #include "Session.hpp"
 #include "Worker.hpp"
@@ -23,6 +24,7 @@
 
 #if defined(__linux__)
 #include <sys/mman.h>
+#include <fcntl.h>
 
 typedef unsigned long DWORD;
 typedef unsigned long* LPDWORD;

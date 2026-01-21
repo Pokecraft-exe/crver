@@ -51,12 +51,15 @@ std::ofstream logFile;
 std::mutex logMutex;
 int sessionsNum = 0;
 std::queue<Session*> SocketQueue;
+std::mutex queueMutex;
+std::condition_variable queueCV;
 
 inline void log(std::string msg) {
 	while (logMutex.try_lock()) {
 		time_t t_date = time(nullptr);
 		std::tm* date = gmtime(&t_date);
 		logFile << std::put_time(date, "%Y-%m-%d %H:%M:%S") << " : " << msg << std::endl;
+		std::cerr << std::put_time(date, "%Y-%m-%d %H:%M:%S") << " : " << msg << std::endl;
 		logMutex.unlock();
 		return;
 	}
@@ -394,7 +397,13 @@ void connectionListener(HTTP_Server* s) {
 		}
 		log("New session accepted with HTTP_ID: " + std::to_string(newClient->NEW_CONNECTION.http.Connection));
 		newClient->active = true;
-		SocketQueue.push(newClient);
+
+		{
+			std::lock_guard<std::mutex> lock(queueMutex);
+			SocketQueue.push(newClient);
+		}
+
+		queueCV.notify_one();
 	}
 	return;
 }
@@ -582,6 +591,7 @@ bool HTTP_Server::start(void) {
 	hints.ai_addrlen = result->ai_addrlen;
 
 	freeaddrinfo(result);
+#endif
 
 	Worker* CurrentWorker = Workers;
 
@@ -593,7 +603,6 @@ bool HTTP_Server::start(void) {
 	}
 
 	printf("%d Workers ready.\n", WorkersCount);
-#endif
 
 	if (listen(this->ListenSocket, SOMAXCONN) == SOCKET_ERROR) {
 		closesocket(this->ListenSocket);

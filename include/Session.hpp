@@ -1,5 +1,5 @@
 #pragma once
-#if defined(__inux__) 
+#if defined(__linux__) 
 typedef unsigned long long int SOCKET;
 #endif
 
@@ -13,7 +13,7 @@ typedef unsigned long long int SOCKET;
 #endif
 
 #include <map>
-#include <msquic/msquic.h>
+#include <msquic.h>
 
 enum class endpoint_type {
     NONE = 0,
