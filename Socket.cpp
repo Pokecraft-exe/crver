@@ -54,7 +54,7 @@ std::queue<Session*> SocketQueue;
 std::mutex queueMutex;
 std::condition_variable queueCV;
 
-inline void log(std::string msg) {
+void log(std::string msg) {
 	while (logMutex.try_lock()) {
 		time_t t_date = time(nullptr);
 		std::tm* date = gmtime(&t_date);

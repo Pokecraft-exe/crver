@@ -1,8 +1,8 @@
 
 # 1. Variables
 CXX      := g++
-CXXFLAGS := -I./include -O3
-LDFLAGS  := -lmsquic
+CXXFLAGS := -I./include -I./msquic/src/inc/ -O3
+LDLIBS  := -lmsquic
 TARGET   := crver
 
 # 2. Wildcards: Automatically find all .cpp files

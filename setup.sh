@@ -17,7 +17,7 @@ sudo apt-get install -y \
 
 echo "Cloning and building MSQuic with Ninja..."
 if [ ! -d "msquic" ]; then
-    git clone --recursive https://github.com/microsoft/msquic.git
+    git clone --recursive --depth=1 https://github.com/microsoft/msquic.git
 fi
 
 cd msquic
