@@ -14,6 +14,18 @@ It works cross-platform on Windows and Linux and provides a lightweight C++ API 
 - Minimal dependencies; built with `g++`/`clang` and `CMake`/`Ninja`.
 - Designed for high-performance workloads with optional CPU pinning and worker pools.
 
+### TODO
+
+- [ ] fix (and finish) cookies
+- [ ] limit first packet to 14KB
+- [ ] add all verbs
+- [ ] add all encodings
+- [ ] add http version not supported (1.1 and 3.0 only)
+- [x] add logging
+- [ ] add url parsing (http://x.x.x.x/xxx/?/...)
+- [ ] add http redirect 
+- [ ] create a service for windows
+
 ---
 
 ## Requirements
@@ -48,12 +60,16 @@ sudo systemctl start crver
 
 Note: The service binds by default to port 80. The binary drops root privileges after binding.
 
+---
+
 ## Usage
 
 Run manually for testing:
 ```
 sudo -u crver /usr/local/bin/crver
 ```
+
+---
 
 Service management:
 ```
@@ -62,6 +78,8 @@ sudo systemctl stop crver
 sudo systemctl status crver
 sudo journalctl -u crver -f
 ```
+
+---
 
 ## Project Structure
 
@@ -80,6 +98,8 @@ crver/
 └── setup.sh          # Dependency installation script
 ```
 
+---
+
 ## CRVER API
 
 - Provides C++ abstractions to create dynamic pages and interact with the server.
@@ -87,6 +107,8 @@ crver/
 - Uses shared memory via IPM for communication between server and page code.
 
 - See examples/ for usage patterns.
+
+---
 
 # License
 
@@ -96,6 +118,8 @@ This project and its forks/releases are released under the Creative Commons Lice
   <img src="https://mirrors.creativecommons.org/presskit/buttons/88x31/png/by-nc-sa.png" width="200px" style="float:right;"/>
   <img src="https://mirrors.creativecommons.org/presskit/buttons/88x31/png/by-nc-sa.eu.png" width="200px" style="float:left;"/>
 </div>
+
+---
 
 ## About
 
