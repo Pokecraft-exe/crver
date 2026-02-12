@@ -33,7 +33,7 @@ extern int affinity(int IN cpu);
 * add logging
 * add http redirect
 * 
-* create a daemon/service for linux and windows
+* create a service windows
 */
 
 const QUIC_API_TABLE* MsQuic;
@@ -85,6 +85,7 @@ std::map<std::string, endpoint_type> endpoints;
 std::map<std::string, std::string> extentions;
 std::map<std::string, std::string> cache;
 std::map<std::string, void*> webMains;
+int workers_num = 1;
 
 #if defined(__linux__)
 extern "C" {
@@ -124,7 +125,8 @@ int main(int argc, char** argv) {
 		std::string dir = j.tryGetJson<std::string>("directory");
 		std::string temp = j.tryGetJson<std::string>("temporary");
 		std::string key = j.tryGetJson<std::string>("key");
-       	std::string cert = j.tryGetJson<std::string>("cert");
+		std::string cert = j.tryGetJson<std::string>("cert");
+		workers_num = j.tryGetJson<int>("workers");
 
 		trim(port);
 		s->port = port;

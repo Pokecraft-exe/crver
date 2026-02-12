@@ -1,6 +1,16 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
+#if defined(__linux__)
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <pwd.h>
+#include <grp.h>
+
+#endif
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -45,6 +55,7 @@ extern std::map<std::string, endpoint_type> endpoints;
 extern std::map<std::string, std::string> extentions;
 extern std::map<std::string, std::string> cache;
 extern std::map<std::string, void*> webMains;
+extern int workers_num;
 
 std::vector<Session> sessions = {};
 std::ofstream logFile;
@@ -58,13 +69,43 @@ inline void log(std::string msg) {
 	while (logMutex.try_lock()) {
 		time_t t_date = time(nullptr);
 		std::tm* date = gmtime(&t_date);
+
+		logFile.open(LOG_FILENAME, std::ios::app);
 		logFile << std::put_time(date, "%Y-%m-%d %H:%M:%S") << " : " << msg << std::endl;
+		logFile.close();
+		
 		std::cerr << std::put_time(date, "%Y-%m-%d %H:%M:%S") << " : " << msg << std::endl;
+		
 		logMutex.unlock();
 		return;
 	}
 	return;
 }
+
+#if defined(__linux__)
+inline void drop_privileges() {
+    struct passwd *pw = getpwnam("crver");
+    if (!pw) {
+        perror("getpwnam");
+        exit(EXIT_FAILURE);
+    }
+
+    if (setgid(pw->pw_gid) != 0) {
+        perror("setgid");
+        exit(EXIT_FAILURE);
+    }
+
+    if (setuid(pw->pw_uid) != 0) {
+        perror("setuid");
+        exit(EXIT_FAILURE);
+    }
+// verify
+    if (getuid() == 0 || getgid() == 0) {
+        fprintf(stderr, "Failed to drop root privileges\n");
+        exit(EXIT_FAILURE);
+    }
+}
+#endif
 
 inline std::string timeToString(const std::tm* timeObj) {
 	std::ostringstream oss;
@@ -119,7 +160,7 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 
 	// Check if the file was opened successfully
 	if (!file.is_open()) {
-		std::cerr << "Error opening file: " << filename << std::endl;
+		log("Error opening file: " + filename.string());
 		return false;
 	}
 
@@ -164,7 +205,7 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 	WSASend(s, &buffer, 1, &bytesSent, MSG_PARTIAL, NULL, NULL);
 	int error = WSAGetLastError();
 	if (bytesSent == 0 && error != 10053) {
-		std::cerr << "Error sending header: " << WSAGetLastError() << std::endl;
+		log("Error sending header: " + std::to_string(WSAGetLastError()));
 		ZeroMemory(buffer.buf, BUFFER_SIZE);
 		return false;
 	}
@@ -177,7 +218,7 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 		file.read(buffer.buf, buffer.len);
 		WSASend(s, &buffer, 1, &bytesSent, 0, NULL, NULL);
 		if (bytesSent == 0) {
-			std::cerr << "Error sending file: " << WSAGetLastError() << std::endl;
+			log("Error sending file: " + std::to_string(WSAGetLastError()));
 			ZeroMemory(buffer.buf, BUFFER_SIZE);
 			return false;
 		}
@@ -200,12 +241,14 @@ inline bool readFile(const std::filesystem::path& filename, Session s, bool isUp
 inline bool executeAndDump(std::string& dll, Session* session, char* request) {
 	unsigned long bytesSent = 0;
 
+        std::cout << "dll: " << dll << " session: " << session->NEW_CONNECTION.http.Connection << ", request: " << request << std::endl;
 	HTTPRequest req = InitRequest(request, sessionsNum);
+	std::cout << "buf\n";
 	WSABUF buffer = reinterpret_cast<WSABUF(*)(HTTPRequest*)>(webMains[dll])(&req);
 
 	WSASend(session->NEW_CONNECTION.http.Connection, &buffer, 1, &bytesSent, 0, NULL, NULL);
 	if (bytesSent == 0) {
-		std::cerr << "Error sending buffer: " << WSAGetLastError() << std::endl;
+		log("Error sending buffer: " + std::to_string(WSAGetLastError()));
 		return false;
 	}
 
@@ -356,20 +399,29 @@ HTTPRequest InitRequest(std::string data, int maxsession) {
 		fileSize));
 #else
 #if defined(__linux__)
-	std::string fileName = "/IPM_SESSION_" + req.COOKIES["SESSIONID"];
-	size_t fileSize = 0x1000;
-	int fd = shm_open(fileName.c_str(), O_RDONLY, 0666);
-	char* buffer = reinterpret_cast<char*>(mmap(NULL, fileSize,
-		PROT_READ, MAP_SHARED, fd, 0));
+	//std::string fileName = "/IPM_SESSION_" + req.COOKIES["SESSIONID"];
+	//size_t fileSize = 0x1000;
+	//int fd = shm_open(fileName.c_str(), O_RDONLY, 0666);
+	//if (fd == -1) {
+	//  log("Error opening shared memory session " + req.COOKIES["SESSIONID"] + " (shm_open)");
+	//  return req;
+	//}
+	//char* buffer = reinterpret_cast<char*>(mmap(NULL, fileSize, PROT_READ, MAP_SHARED, fd, 0));
+	//if (buffer == MAP_FAILED) {
+        //  log("Error opening shared memory session " + req.COOKIES["SESSIONID"] + " (mmap)");
+        //  close(fd);
+        //  return req;
+        //}
 #endif
 #endif
-	std::stringstream ss(buffer);
+#warning("line 382 re enable cookie (and make it work)")
+	/*std::stringstream ss(buffer);
 	// session data is stored as key=value\nkey2=value2\n
 	while (std::getline(ss, get)) {
 		std::string key = get.substr(0, get.find('='));
 		std::string value = get.substr(get.find('=') + 1, get.length() - (get.find('=') + 1));
 		req.SESSION.insert({ url_decode(key), url_decode(value) });
-	}
+	}*/
 
 	// close handles
 #if defined(_WIN64) || defined(_WIN32)
@@ -377,8 +429,8 @@ HTTPRequest InitRequest(std::string data, int maxsession) {
 	CloseHandle(hMapFile);
 #else
 #if defined(__linux__)
-	munmap(buffer, fileSize);
-	close(fd);
+	//munmap(buffer, fileSize);
+	//close(fd);
 #endif
 #endif
 	return req;
@@ -450,21 +502,25 @@ int listener(HTTP_Server* s, Session* CurrentSession, Worker* w) {
 		os << buffer.buf << "\n---------------\n";
 
 		bool pageGot = getPage(page, buffer);
+		
+		WSABUF srcIpBuf = { BUFFER_SIZE, new char[BUFFER_SIZE] };
+		
+		#if defined(_WIN64) || defined(_WIN32) 
+			WSAAddressToStringA(&CurrentSession->NEW_CONNECTION.http.Destination, CurrentSession->NEW_CONNECTION.http.Dest_len, NULL, srcIpBuf.buf, (LPDWORD)&srcIpBuf.len);
+                #else
+			// Linux equivalent of WSAAddressToStringA
+			inet_ntop(AF_INET, &((struct sockaddr_in*)&CurrentSession->NEW_CONNECTION.http.Destination)->sin_addr, srcIpBuf.buf, srcIpBuf.len);
+                #endif
 
 		if (!pageGot) {
-#if defined(_WIN64) || defined(_WIN32) 
-			WSAAddressToStringA(&CurrentSession->NEW_CONNECTION.http.Destination, CurrentSession->NEW_CONNECTION.http.Dest_len, NULL, buffer.buf, (LPDWORD)&buffer.len);
-#else
-			// Linux equivalent of WSAAddressToStringA
-			inet_ntop(AF_INET, &((struct sockaddr_in*)&CurrentSession->NEW_CONNECTION.http.Destination)->sin_addr, buffer.buf, buffer.len);
-#endif
-			log("[" + std::string(buffer.buf) + "] [Error] Couldn't retrieve page from request.");
+			log("[" + std::string(srcIpBuf.buf) + "] [Error] Couldn't retrieve page from request.");
 			break;
 		}
 
 		log("Session with HTTP ID: " + std::to_string(CurrentSession->NEW_CONNECTION.http.Connection));
-		log("[" + std::string(buffer.buf) + "] Requested page: " + page);
-
+		log("[" + std::string(srcIpBuf.buf) + "] Requested page: " + page);
+                delete[] srcIpBuf.buf;
+                
 		std::filesystem::path file;
 
 		clientNumber = NUM_CLIENTS();
@@ -483,7 +539,7 @@ int listener(HTTP_Server* s, Session* CurrentSession, Worker* w) {
 				sent = readFile(file.string(), *CurrentSession, endpoint == endpoint_type::UPLOAD);
 
 			if (!sent) {
-				std::cerr << "Error sending file: " << file.string() << std::endl;
+				log("Error sending file: " + file.string());
 				break;
 			}
 		} else {
@@ -515,7 +571,7 @@ int listener(HTTP_Server* s, Session* CurrentSession, Worker* w) {
 			WSASend(CurrentSession->NEW_CONNECTION.http.Connection, &toSendBuffer, 1, &bytesSent, MSG_DONTROUTE, NULL, NULL);
 			int error = WSAGetLastError();
 			if (bytesSent == 0 && error != 10053) {
-				std::cerr << "Error sending header: " << error << std::endl;
+			      log("Error sending header: " + error);
 				ZeroMemory(buffer.buf, buffer.len);
 				break;
 			}
@@ -530,14 +586,9 @@ int listener(HTTP_Server* s, Session* CurrentSession, Worker* w) {
 }
 
 bool HTTP_Server::start(void) {
-	logFile = std::ofstream(LOG_FILENAME);
-	if (!logFile.is_open())
-	{
-	    std::cerr << "Failed to open log file (" << LOG_FILENAME << ')' << std::endl;
-	    std::terminate();
-	}
-
 #if defined(__linux__)
+	uid_t crver_uid = getuid();
+
 	sockaddr_in server_address_in;
 	server_address_in.sin_family = AF_INET;
 
@@ -549,6 +600,8 @@ bool HTTP_Server::start(void) {
 	this->ListenSocket = socket(AF_INET, SOCK_STREAM, 0);
 
 	bind(this->ListenSocket, (sockaddr*)&server_address_in, sizeof(server_address_in));
+
+	drop_privileges();
 #else
 	WSADATA dat;
 	addrinfo hints, * result = NULL;
@@ -595,7 +648,7 @@ bool HTTP_Server::start(void) {
 
 	Worker* CurrentWorker = Workers;
 
-	for (int i = 0; i < 100; i++) {
+	for (int i = 0; i < workers_num; i++) {
 		CurrentWorker->initialize(this);
 		CurrentWorker->createNewWorker();
 		CurrentWorker = CurrentWorker->getNextWorker();
@@ -652,6 +705,5 @@ void HTTP_Server::terminate(void) {
 #endif
 
 	log("Successfully terminated!");
-	logFile.close();
 	return;
 }

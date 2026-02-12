@@ -3,7 +3,6 @@
 set -e
 
 echo "Updating system and installing dependencies..."
-sudo apt-get update
 sudo apt-get install -y \
     build-essential \
     cmake \

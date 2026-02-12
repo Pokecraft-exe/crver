@@ -46,7 +46,10 @@ int affinity(int IN icpu) {
 #endif
 #if defined(__linux__)
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,7 +148,7 @@ int affinity(int IN icpu) {
         return 1;
     }
 
-    int cpu = 4; // choose target CPU here
+    int cpu = 1; // choose target CPU here
     if (icpu > 1) cpu = icpu;
 
     pin_to_cpu(cpu);

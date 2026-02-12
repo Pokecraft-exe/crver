@@ -19,7 +19,7 @@
 #define RAWIFY(x) R#x
 #define STRINGIFY(x) RAWIFY(ENDHTMLZONE(x)ENDHTMLZONE)
 #else
-#define STRINGIFY(x) R"ENDHTMLZONE(x)ENDHTMLZONE"
+#define STRINGIFY(...) #__VA_ARGS__
 #endif
 #define HTML(x) crver::out << STRINGIFY(x)
 
