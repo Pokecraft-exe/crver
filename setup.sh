@@ -31,6 +31,7 @@ $SUDO apt-get install -y \
     python3 \
     pkg-config \
     libssl-dev \
+    libcap2-bin \
     liblttng-ust-dev \
     git
 
