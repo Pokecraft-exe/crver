@@ -7,6 +7,14 @@ SUDO := $(shell if [ "$$(id -u)" -eq 0 ]; then echo ""; else echo "sudo"; fi)
 # 2. Debian / apt check
 ########################################
 APT_EXISTS := $(shell command -v apt-get 2>/dev/null)
+	@if command -v systemctl >/dev/null 2>&1; then \
+		$(SUDO) cp crver.service /etc/systemd/system/; \
+		$(SUDO) systemctl daemon-reload; \
+		$(SUDO) systemctl enable crver; \
+		echo "Service installed. Run: $(SUDO) systemctl start crver"; \
+	else \
+		echo "systemctl not found — skipping service installation."; \
+	fi
 
 ifeq ($(APT_EXISTS),)
 $(error "Error: apt-get not found. This Makefile only supports Debian-based distributions.")
@@ -62,14 +70,16 @@ install: $(TARGET)
 		-I/var/cwww/sites-includes \
 		-shared
 
-	# Install systemd service
-	$(SUDO) cp crver.service /etc/systemd/system/
-	$(SUDO) systemctl daemon-reload
-	$(SUDO) systemctl enable crver
+	@if command -v systemctl >/dev/null 2>&1; then \
+		$(SUDO) cp crver.service /etc/systemd/system/; \
+		$(SUDO) systemctl daemon-reload; \
+		$(SUDO) systemctl enable crver; \
+		echo "Service installed. Run: $(SUDO) systemctl start crver"; \
+	else \
+		echo "systemctl not found — skipping service installation."; \
+	fi
 
-	@echo ""
 	@echo "Installation complete."
-	@echo "Run: $(SUDO) systemctl start crver"
 
 ########################################
 # 6. Clean
