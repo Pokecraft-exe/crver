@@ -1,44 +1,79 @@
+########################################
+# 1. Root / sudo detection
+########################################
+SUDO := $(shell if [ "$$(id -u)" -eq 0 ]; then echo ""; else echo "sudo"; fi)
 
-# 1. Variables
+########################################
+# 2. Debian / apt check
+########################################
+APT_EXISTS := $(shell command -v apt-get 2>/dev/null)
+
+ifeq ($(APT_EXISTS),)
+$(error "Error: apt-get not found. This Makefile only supports Debian-based distributions.")
+endif
+
+########################################
+# 3. Variables
+########################################
 CXX      := g++
 CXXFLAGS := -I./include -I./msquic/src/inc/ -O3
-LDLIBS  := -lmsquic
+LDLIBS   := -lmsquic
 TARGET   := crver
 
-# 2. Wildcards: Automatically find all .cpp files
 SOURCES  := $(wildcard *.cpp)
-# Create a list of object files (.o) from the .cpp files
 OBJS     := $(SOURCES:.cpp=.o)
-# Track all .hpp files in the include directory
 HEADERS  := $(wildcard include/*.hpp)
 
-# 3. Main Rule
+########################################
+# 4. Build Rules
+########################################
 all: $(TARGET)
 
-# 4. Linking: Depends on all object files
 $(TARGET): $(OBJS)
-	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
+	$(CXX) $(OBJS) -o $(TARGET) $(LDLIBS)
 
-# 5. Compilation: Each .o depends on its .cpp AND the headers
-# This ensures that if any .hpp changes, the .cpp files recompile
 %.o: %.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# 6. Installation (as defined previously)
-install:
-	sudo cp $(TARGET) /usr/local/bin/
-	sudo chmod +x /usr/local/bin/$(TARGET)
-	sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/$(TARGET)
-	sudo mkdir -p /etc/crver/
-	sudo cp examples/linux/config.cfg /etc/crver/
-	sudo cp examples/linux/index.cpp /var/cwww/src/
-	sudo cp -R sites-includes/ /var/cwww/
-	sudo g++ -fPIC /var/cwww/src/index.cpp -o /var/cwww/build/index.so -I/var/cwww/sites-includes -shared
-	sudo cp crver.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-	sudo systemctl enable crver
-	@echo "Installation complete. Run 'sudo systemctl start crver'"
+########################################
+# 5. Install
+########################################
+install: $(TARGET)
+	@echo "Installing $(TARGET)..."
 
+	$(SUDO) cp $(TARGET) /usr/local/bin/
+	$(SUDO) chmod +x /usr/local/bin/$(TARGET)
+
+	# Allow binding to ports <1024 without root
+	$(SUDO) setcap 'cap_net_bind_service=+ep' /usr/local/bin/$(TARGET)
+
+	$(SUDO) mkdir -p /etc/crver/
+	$(SUDO) mkdir -p /var/cwww/src
+	$(SUDO) mkdir -p /var/cwww/build
+	$(SUDO) mkdir -p /var/cwww
+
+	$(SUDO) cp examples/linux/config.cfg /etc/crver/
+	$(SUDO) cp examples/linux/index.cpp /var/cwww/src/
+	$(SUDO) cp -R sites-includes/ /var/cwww/
+
+	# Build shared object
+	$(SUDO) g++ -fPIC /var/cwww/src/index.cpp \
+		-o /var/cwww/build/index.so \
+		-I/var/cwww/sites-includes \
+		-shared
+
+	# Install systemd service
+	$(SUDO) cp crver.service /etc/systemd/system/
+	$(SUDO) systemctl daemon-reload
+	$(SUDO) systemctl enable crver
+
+	@echo ""
+	@echo "Installation complete."
+	@echo "Run: $(SUDO) systemctl start crver"
+
+########################################
+# 6. Clean
+########################################
 clean:
 	rm -f $(OBJS) $(TARGET)
 
