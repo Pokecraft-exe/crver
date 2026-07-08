@@ -1,5 +1,3 @@
-<img width="3240" height="3324" alt="image" src="https://github.com/user-attachments/assets/9eba29dc-2a57-4be6-b4e3-33ab7d3743da" /># crver
-
 **crver** is a proof-of-concept custom HTTP server designed to serve and request compiled dynamic pages.  
 It works cross-platform on Windows and Linux and provides a lightweight C++ API for page-server interaction.
 
